@@ -7,6 +7,8 @@ type InviteSummary = {
   inviteType: "company_join" | "bootstrap_ceo";
   allowedJoinTypes: "human" | "agent" | "both";
   expiresAt: string;
+  invitePath?: string;
+  inviteUrl?: string;
   onboardingPath?: string;
   onboardingUrl?: string;
   onboardingTextPath?: string;
@@ -67,6 +69,7 @@ type BoardClaimStatus = {
 type CompanyInviteCreated = {
   id: string;
   token: string;
+  invitePath?: string;
   inviteUrl: string;
   expiresAt: string;
   allowedJoinTypes: "human" | "agent" | "both";
