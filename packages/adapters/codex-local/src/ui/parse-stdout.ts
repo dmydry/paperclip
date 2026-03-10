@@ -21,6 +21,25 @@ function asNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+const MAX_TOOL_RESULT_CHARS = 4000;
+
+function redactSecrets(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/(Authorization:\s*Bearer\s+)([A-Za-z0-9._-]+)/g, "$1[redacted]")
+    .replace(/(Bearer\s+)(eyJ[A-Za-z0-9._-]+)/g, "$1[redacted]")
+    .replace(/((?:PAPERCLIP_API_KEY|TOKEN|JWT|API_KEY)=)(eyJ[A-Za-z0-9._-]+)/g, "$1[redacted]")
+    .replace(/((?:PAPERCLIP_API_KEY|TOKEN|JWT|API_KEY)=['"])(eyJ[A-Za-z0-9._-]+)(['"])/g, "$1[redacted]$3");
+}
+
+function truncateLargeOutput(text: string): string {
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+  const head = text.slice(0, 2500).replace(/\s+$/, "");
+  const tail = text.slice(-1000).replace(/^\s+/, "");
+  const omitted = text.length - head.length - tail.length;
+  return `${head}\n\n[output truncated: omitted ${omitted} chars]\n\n${tail}`;
+}
+
 function errorText(value: unknown): string {
   if (typeof value === "string") return value;
   const rec = asRecord(value);
@@ -54,10 +73,10 @@ function parseCommandExecutionItem(
   phase: "started" | "completed",
 ): TranscriptEntry[] {
   const id = asString(item.id);
-  const command = asString(item.command);
+  const command = redactSecrets(asString(item.command));
   const status = asString(item.status);
   const exitCode = typeof item.exit_code === "number" && Number.isFinite(item.exit_code) ? item.exit_code : null;
-  const output = asString(item.aggregated_output).replace(/\s+$/, "");
+  const output = truncateLargeOutput(redactSecrets(asString(item.aggregated_output).replace(/\s+$/, "")));
 
   if (phase === "started") {
     return [{

@@ -5,6 +5,7 @@ import { dashboardApi } from "../api/dashboard";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
 import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useCompany } from "../context/CompanyContext";
@@ -44,6 +45,11 @@ export function Dashboard() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Dashboard" }]);
@@ -81,6 +87,11 @@ export function Dashboard() {
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
+  const userName = (id: string | null) => {
+    if (!id) return null;
+    const member = (members ?? []).find((item) => item.principalType === "user" && item.principalId === id);
+    return member?.userName?.trim() || member?.userEmail?.trim() || null;
+  };
 
   useEffect(() => {
     for (const timer of activityAnimationTimersRef.current) {
@@ -334,6 +345,12 @@ export function Dashboard() {
                             </span>
                             {issue.assigneeAgentId && (() => {
                               const name = agentName(issue.assigneeAgentId);
+                              return name
+                                ? <span className="hidden sm:inline-flex"><Identity name={name} size="sm" /></span>
+                                : null;
+                            })()}
+                            {!issue.assigneeAgentId && issue.assigneeUserId && (() => {
+                              const name = userName(issue.assigneeUserId);
                               return name
                                 ? <span className="hidden sm:inline-flex"><Identity name={name} size="sm" /></span>
                                 : null;

@@ -3,6 +3,7 @@ import { Link } from "@/lib/router";
 import type { Issue } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
@@ -138,6 +139,11 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     queryFn: () => issuesApi.listLabels(companyId!),
     enabled: !!companyId,
   });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(companyId!),
+    queryFn: () => accessApi.listMembers(companyId!),
+    enabled: !!companyId,
+  });
 
   const createLabel = useMutation({
     mutationFn: (data: { name: string; color: string }) => issuesApi.createLabel(companyId!, data),
@@ -191,14 +197,24 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const assignee = issue.assigneeAgentId
     ? agents?.find((a) => a.id === issue.assigneeAgentId)
     : null;
-  const userLabel = (userId: string | null | undefined) =>
-    userId
-      ? userId === "local-board"
-        ? "Board"
-        : currentUserId && userId === currentUserId
-          ? "Me"
-          : userId.slice(0, 5)
-      : null;
+  const memberUserMap = useMemo(
+    () =>
+      new Map(
+        (members ?? [])
+          .filter((member) => member.principalType === "user" && member.status === "active")
+          .map((member) => [member.principalId, member] as const),
+      ),
+    [members],
+  );
+  const userLabel = (userId: string | null | undefined) => {
+    if (!userId) return null;
+    if (userId === "local-board") return "Board";
+    if (currentUserId && userId === currentUserId) return "Me";
+    const member = memberUserMap.get(userId);
+    if (member?.userName?.trim()) return member.userName.trim();
+    if (member?.userEmail?.trim()) return member.userEmail.trim();
+    return userId.slice(0, 5);
+  };
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
   const creatorUserLabel = userLabel(issue.createdByUserId);
 
@@ -349,6 +365,35 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             {creatorUserLabel ? `Assign to ${creatorUserLabel === "Me" ? "me" : creatorUserLabel}` : "Assign to requester"}
           </button>
         )}
+        {(members ?? [])
+          .filter((member) => member.principalType === "user" && member.status === "active")
+          .filter((member) => member.principalId !== issue.createdByUserId)
+          .filter((member) => {
+            if (!assigneeSearch.trim()) return true;
+            const q = assigneeSearch.toLowerCase();
+            const label = userLabel(member.principalId) ?? "";
+            const email = member.userEmail ?? "";
+            return `${label} ${email}`.toLowerCase().includes(q);
+          })
+          .map((member) => {
+            const label = userLabel(member.principalId) ?? member.principalId.slice(0, 5);
+            return (
+              <button
+                key={`user:${member.principalId}`}
+                className={cn(
+                  "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+                  issue.assigneeUserId === member.principalId && "bg-accent",
+                )}
+                onClick={() => {
+                  onUpdate({ assigneeAgentId: null, assigneeUserId: member.principalId });
+                  setAssigneeOpen(false);
+                }}
+              >
+                <User className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="truncate">{label}</span>
+              </button>
+            );
+          })}
         {sortedAgents
           .filter((a) => {
             if (!assigneeSearch.trim()) return true;

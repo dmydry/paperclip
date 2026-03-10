@@ -24,6 +24,58 @@ Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli
 
 Follow these steps every time you wake up:
 
+Fast-path rule for standard intake:
+
+- Do not re-discover the Paperclip workflow from local docs, repo search, or AGENTS files during a normal heartbeat.
+- Do not grep the repo for `PAPERCLIP_TASK_ID`, issue ids, or generic "issue" strings as a substitute for Paperclip API intake.
+- If `PAPERCLIP_TASK_ID` is present, go directly to that issue via API.
+- If `PAPERCLIP_TASK_ID` is present, do not inspect `paperclip.sh`, Paperclip `.env` files, local instance config, historical run logs, or API tokens to rediscover workflow, auth, or context.
+- Exception: only inspect those runtime files/logs when the task is explicitly about Paperclip runtime behavior, adapter behavior, auth, orchestration, or control-plane debugging.
+- If `PAPERCLIP_TASK_ID` is absent, go directly to your assigned inbox via API.
+- Only open local instructions/skills when you need role-specific behavior or a non-routine workflow detail.
+- Standard intake should be at most:
+  - one identity/inbox lookup
+  - one chosen issue lookup
+  - one comments lookup for that chosen issue
+  - optional parent/ancestor lookup if needed
+- Prefer the API as the source of truth for current work. Do not search the workspace to infer what task you should be doing.
+- In ordinary heartbeats, do not use CLI discovery commands such as:
+  - `paperclipai --help`
+  - `paperclipai issue --help`
+  - `paperclipai issue list --help`
+  - `paperclipai dashboard --help`
+  - `paperclipai context --help`
+  - `paperclipai context show`
+  - `paperclipai agent --help`
+  - `paperclipai agent list`
+- Also do not dump `env | rg PAPERCLIP`, local config files, or repo wrapper scripts just to reconstruct normal intake.
+- If the standard intake path fails once, correct the command and retry the same narrow path. Do not widen into dashboard/context/agent enumeration unless the task is explicitly about Paperclip runtime/auth/debugging.
+
+Canonical heartbeat API recipe:
+
+- If `PAPERCLIP_TASK_ID` exists:
+  - `GET /api/issues/{issueId}`
+  - `GET /api/issues/{issueId}/comments`
+- If `PAPERCLIP_TASK_ID` is absent:
+  - `GET /api/companies/{companyId}/issues?assigneeAgentId={your-agent-id}&status=todo,in_progress,blocked`
+  - compact-project the results first
+  - choose one actionable issue
+  - then fetch only that issue and its latest comments
+- If that assigned-issues inbox result is empty:
+  - exit the heartbeat unless there is an explicit mention-based handoff or the task is specifically about Paperclip runtime/debugging
+  - do not escalate into whole-company issue scans, dashboard probing, context inspection, or agent-list exploration
+
+Canonical CLI fallback (only when you deliberately choose CLI over direct API):
+
+- Use the wrapper/known entrypoint directly; do not rediscover it with `--help`
+- Prefer a compact JSON call plus projection
+- If CLI emits banner text before JSON, strip to the first JSON object/array before piping to `jq`
+- Do not run whole-company `issue list --json` as an intake fallback when the assigned-inbox query can be made directly via API
+- For this workspace, prefer the shared helper when available:
+  - inbox: `/Users/dmydry/projects/paper/scripts/paperclip_compact_inbox.sh inbox`
+  - task: `/Users/dmydry/projects/paper/scripts/paperclip_compact_inbox.sh task <ISSUE_ID>`
+- Treat that helper as the known-good compact CLI path for ordinary heartbeats instead of inventing new `paperclipai` shell pipelines.
+
 **Step 1 — Identity.** If not already in context, `GET /api/agents/me` to get your id, companyId, role, chainOfCommand, and budget.
 
 **Step 2 — Approval follow-up (when triggered).** If `PAPERCLIP_APPROVAL_ID` is set (or wake reason indicates approval resolution), review the approval first:
@@ -36,6 +88,9 @@ Follow these steps every time you wake up:
     Always include links to the approval and issue in that comment.
 
 **Step 3 — Get assignments.** `GET /api/companies/{companyId}/issues?assigneeAgentId={your-agent-id}&status=todo,in_progress,blocked`. Results sorted by priority. This is your inbox.
+
+If `PAPERCLIP_TASK_ID` is missing, this inbox call is the mandatory first fallback. Do not replace it with local repo search, issue-id grep, or ad hoc instruction rediscovery.
+If this assigned-issues inbox call returns no actionable issues, exit the heartbeat unless there is an explicit mention-based ownership handoff or a task-specific Paperclip runtime debugging request. Do not widen into dashboard, context, agent, or whole-company issue discovery.
 
 **Step 4 — Pick work (with mention exception).** Work on `in_progress` first, then `todo`. Skip `blocked` unless you can unblock it.
 **Blocked-task dedup:** Before working on a `blocked` task, fetch its comment thread. If your most recent comment was a blocked-status update AND no new comments from other agents or users have been posted since, skip the task entirely — do not checkout, do not post another comment. Exit the heartbeat (or move to the next task) instead. Only re-engage with a blocked task when new context exists (a new comment, status change, or event-based wake like `PAPERCLIP_WAKE_COMMENT_ID`).
@@ -55,9 +110,20 @@ Headers: Authorization: Bearer $PAPERCLIP_API_KEY, X-Paperclip-Run-Id: $PAPERCLI
 ```
 
 If already checked out by you, returns normally. If owned by another agent: `409 Conflict` — stop, pick a different task. **Never retry a 409.**
+If the issue is already `in_progress` and assigned to you, you still MUST call checkout once at the start of the run. This adopts any missing/null checkout lock onto the current `PAPERCLIP_RUN_ID` and prevents later comment/update ownership conflicts.
 
 **Step 6 — Understand context.** `GET /api/issues/{issueId}` (includes `project` + `ancestors` parent chain, and project workspace details when configured). `GET /api/issues/{issueId}/comments`. Read ancestors to understand _why_ this task exists.
 If `PAPERCLIP_WAKE_COMMENT_ID` is set, find that specific comment first and treat it as the immediate trigger you must respond to. Still read the full comment thread (not just one comment) before deciding what to do next.
+
+Token discipline for issue/context fetches:
+
+- Do not dump full issue JSON or full comments arrays into the model unless raw payload inspection is truly required.
+- Prefer compact extraction. Examples:
+  - issue summary: `jq '{identifier,title,status,priority,assigneeAgentId,assigneeUserId,parentId,goalId,updatedAt,description}'`
+  - latest comments: `jq 'sort_by(.createdAt) | reverse | .[:5] | map({id,authorAgentId,authorUserId,createdAt,body})'`
+  - single triggering comment: fetch that comment id directly when available
+- If a thread is long, summarize the latest relevant comments first and only fetch older comments when a blocker remains unclear.
+- When a response must be stored in full, write it to a file and print only a short summary plus the file path.
 
 **Step 7 — Do the work.** Use your tools and capabilities.
 
@@ -75,6 +141,15 @@ Headers: X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
 ```
 
 Status values: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`, `cancelled`. Priority values: `critical`, `high`, `medium`, `low`. Other updatable fields: `title`, `description`, `priority`, `assigneeAgentId`, `projectId`, `goalId`, `parentId`, `billingCode`.
+
+Preferred write helper for this workspace:
+
+- update/status + optional comment:
+  - `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh update <ISSUE_ID> --status <STATUS> --comment "text"`
+- comment only:
+  - `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh comment <ISSUE_ID> --body "text"`
+
+Use this helper when possible instead of hand-building JSON, heredocs, or inline shell-escaped comment payloads.
 
 **Step 9 — Delegate if needed.** Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. Set `billingCode` for cross-team work.
 
@@ -139,6 +214,22 @@ When posting issue comments, use concise markdown with:
 - a short status line
 - bullets for what changed / what is blocked
 - links to related entities when available
+- use real markdown line breaks, not literal `\n` sequences
+
+For multi-line markdown comments:
+
+- write the body to a temp markdown file first
+- then use `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh comment <ISSUE_ID> --body-file /tmp/comment.md`
+- or `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh update <ISSUE_ID> --status <STATUS> --comment-file /tmp/comment.md`
+
+Reserve inline `--body "..."` / `--comment "..."` for single-line comments only.
+
+For new issue creation with multi-line descriptions:
+
+- do not use inline `--description "...\n..."` via the CLI wrapper
+- write the description to a temp markdown file first
+- then use `/Users/dmydry/projects/paper/scripts/paperclip_issue_create.sh --title "..." --description-file /tmp/issue.md ...`
+- reserve inline `--description "..."` for single-line descriptions only
 
 **Company-prefixed URLs (required):** All internal links MUST include the company prefix. Derive the prefix from any issue identifier you have (e.g., `PAP-315` → prefix is `PAP`). Use this prefix in all UI links:
 

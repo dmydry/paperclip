@@ -321,6 +321,11 @@ export function Inbox() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Inbox" }]);
@@ -445,6 +450,11 @@ export function Inbox() {
   const agentName = (id: string | null) => {
     if (!id) return null;
     return agentById.get(id) ?? null;
+  };
+  const userName = (id: string | null) => {
+    if (!id) return null;
+    const member = (members ?? []).find((item) => item.principalType === "user" && item.principalId === id);
+    return member?.userName?.trim() || member?.userEmail?.trim() || null;
   };
 
   const approveMutation = useMutation({
@@ -865,6 +875,13 @@ export function Inbox() {
                       {issue.assigneeAgentId &&
                         (() => {
                           const name = agentName(issue.assigneeAgentId);
+                          return name ? (
+                            <span className="hidden sm:inline-flex"><Identity name={name} size="sm" /></span>
+                          ) : null;
+                        })()}
+                      {!issue.assigneeAgentId && issue.assigneeUserId &&
+                        (() => {
+                          const name = userName(issue.assigneeUserId);
                           return name ? (
                             <span className="hidden sm:inline-flex"><Identity name={name} size="sm" /></span>
                           ) : null;

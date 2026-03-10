@@ -26,6 +26,14 @@ const PAPERCLIP_SKILLS_CANDIDATES = [
 ];
 const CODEX_ROLLOUT_NOISE_RE =
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::rollout::list:\s+state db missing rollout path for thread\s+[a-z0-9-]+$/i;
+const TOKEN_DISCIPLINE_INSTRUCTIONS = `Token discipline rules (required):
+- Do not pull raw/minified HTML, full page source, full Next.js flight payloads, or full API/JSON blobs into the chat unless the task explicitly requires raw inspection.
+- Never use line-based truncation like \`head -n 20\` on minified HTML/JSON; one line may still contain the whole document.
+- For large responses, write to a file and print only a compact summary back to the model: counts, booleans, selected keys, short snippets, or the last few relevant lines.
+- Prefer targeted extraction commands such as \`jq '{key: .key}'\`, \`jq 'map({id,createdAt,authorAgentId,authorUserId,body}) | .[:5]'\`, \`grep -o ... | wc -l\`, \`rg -n ...\`, \`sed -n 'start,endp'\`, or \`python\`/Node scripts that emit only the exact fields needed.
+- When reading Paperclip issue comments, avoid dumping the full thread unless the task truly requires it; prefer latest relevant comments, concise summaries, and only the fields needed for the decision.
+- When checking production pages, prefer selector counts, extracted attributes, HTTP status, or short matched snippets. Do not print full HTML.
+- If a command may produce a large output, redirect it to an artifact file first, then print a short summary plus the file path.`;
 
 function stripCodexRolloutNoise(text: string): string {
   const parts = text.split(/\r?\n/);
@@ -256,6 +264,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
       );
     }
+  }
+  if (instructionsPrefix.length > 0) {
+    instructionsPrefix += `${TOKEN_DISCIPLINE_INSTRUCTIONS}\n\n`;
+  } else {
+    instructionsPrefix = `${TOKEN_DISCIPLINE_INSTRUCTIONS}\n\n`;
   }
   const commandNotes = (() => {
     if (!instructionsFilePath) return [] as string[];

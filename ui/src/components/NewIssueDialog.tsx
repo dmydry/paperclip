@@ -5,6 +5,7 @@ import { useCompany } from "../context/CompanyContext";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
@@ -60,7 +61,7 @@ interface IssueDraft {
   description: string;
   status: string;
   priority: string;
-  assigneeId: string;
+  assigneeValue: string;
   projectId: string;
   assigneeModelOverride: string;
   assigneeThinkingEffort: string;
@@ -93,6 +94,19 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "max", label: "Max" },
   ],
 } as const;
+
+function parseAssigneeValue(value: string): { assigneeAgentId?: string; assigneeUserId?: string } {
+  if (!value) return {};
+  if (value.startsWith("agent:")) {
+    const assigneeAgentId = value.slice("agent:".length);
+    return assigneeAgentId ? { assigneeAgentId } : {};
+  }
+  if (value.startsWith("user:")) {
+    const assigneeUserId = value.slice("user:".length);
+    return assigneeUserId ? { assigneeUserId } : {};
+  }
+  return { assigneeAgentId: value };
+}
 
 function buildAssigneeAdapterOverrides(input: {
   adapterType: string | null | undefined;
@@ -137,7 +151,19 @@ function loadDraft(): IssueDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as IssueDraft;
+    const parsed = JSON.parse(raw) as Partial<IssueDraft> & { assigneeId?: string };
+    return {
+      title: parsed.title ?? "",
+      description: parsed.description ?? "",
+      status: parsed.status ?? "todo",
+      priority: parsed.priority ?? "",
+      assigneeValue: parsed.assigneeValue ?? (parsed.assigneeId ? `agent:${parsed.assigneeId}` : ""),
+      projectId: parsed.projectId ?? "",
+      assigneeModelOverride: parsed.assigneeModelOverride ?? "",
+      assigneeThinkingEffort: parsed.assigneeThinkingEffort ?? "",
+      assigneeChrome: parsed.assigneeChrome ?? false,
+      assigneeUseProjectWorkspace: parsed.assigneeUseProjectWorkspace ?? true,
+    };
   } catch {
     return null;
   }
@@ -174,7 +200,7 @@ export function NewIssueDialog() {
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState("todo");
   const [priority, setPriority] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+  const [assigneeValue, setAssigneeValue] = useState("");
   const [projectId, setProjectId] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
@@ -209,6 +235,11 @@ export function NewIssueDialog() {
     queryFn: () => projectsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(effectiveCompanyId!),
+    queryFn: () => accessApi.listMembers(effectiveCompanyId!),
+    enabled: !!effectiveCompanyId && newIssueOpen,
+  });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -220,7 +251,9 @@ export function NewIssueDialog() {
     userId: currentUserId,
   });
 
-  const assigneeAdapterType = (agents ?? []).find((agent) => agent.id === assigneeId)?.adapterType ?? null;
+  const selectedAssigneeAgentId = assigneeValue.startsWith("agent:") ? assigneeValue.slice("agent:".length) : "";
+  const selectedAssigneeUserId = assigneeValue.startsWith("user:") ? assigneeValue.slice("user:".length) : "";
+  const assigneeAdapterType = (agents ?? []).find((agent) => agent.id === selectedAssigneeAgentId)?.adapterType ?? null;
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
@@ -295,7 +328,7 @@ export function NewIssueDialog() {
       description,
       status,
       priority,
-      assigneeId,
+      assigneeValue,
       projectId,
       assigneeModelOverride,
       assigneeThinkingEffort,
@@ -307,7 +340,7 @@ export function NewIssueDialog() {
     description,
     status,
     priority,
-    assigneeId,
+    assigneeValue,
     projectId,
     assigneeModelOverride,
     assigneeThinkingEffort,
@@ -329,7 +362,13 @@ export function NewIssueDialog() {
       setStatus(newIssueDefaults.status ?? "todo");
       setPriority(newIssueDefaults.priority ?? "");
       setProjectId(newIssueDefaults.projectId ?? "");
-      setAssigneeId(newIssueDefaults.assigneeAgentId ?? "");
+      setAssigneeValue(
+        newIssueDefaults.assigneeAgentId
+          ? `agent:${newIssueDefaults.assigneeAgentId}`
+          : newIssueDefaults.assigneeUserId
+            ? `user:${newIssueDefaults.assigneeUserId}`
+            : "",
+      );
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -339,7 +378,13 @@ export function NewIssueDialog() {
       setDescription(draft.description);
       setStatus(draft.status || "todo");
       setPriority(draft.priority);
-      setAssigneeId(newIssueDefaults.assigneeAgentId ?? draft.assigneeId);
+      setAssigneeValue(
+        newIssueDefaults.assigneeAgentId
+          ? `agent:${newIssueDefaults.assigneeAgentId}`
+          : newIssueDefaults.assigneeUserId
+            ? `user:${newIssueDefaults.assigneeUserId}`
+            : draft.assigneeValue,
+      );
       setProjectId(newIssueDefaults.projectId ?? draft.projectId);
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(draft.assigneeThinkingEffort ?? "");
@@ -349,7 +394,13 @@ export function NewIssueDialog() {
       setStatus(newIssueDefaults.status ?? "todo");
       setPriority(newIssueDefaults.priority ?? "");
       setProjectId(newIssueDefaults.projectId ?? "");
-      setAssigneeId(newIssueDefaults.assigneeAgentId ?? "");
+      setAssigneeValue(
+        newIssueDefaults.assigneeAgentId
+          ? `agent:${newIssueDefaults.assigneeAgentId}`
+          : newIssueDefaults.assigneeUserId
+            ? `user:${newIssueDefaults.assigneeUserId}`
+            : "",
+      );
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -390,7 +441,7 @@ export function NewIssueDialog() {
     setDescription("");
     setStatus("todo");
     setPriority("");
-    setAssigneeId("");
+    setAssigneeValue("");
     setProjectId("");
     setAssigneeOptionsOpen(false);
     setAssigneeModelOverride("");
@@ -405,7 +456,7 @@ export function NewIssueDialog() {
   function handleCompanyChange(companyId: string) {
     if (companyId === effectiveCompanyId) return;
     setDialogCompanyId(companyId);
-    setAssigneeId("");
+    setAssigneeValue("");
     setProjectId("");
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
@@ -434,7 +485,7 @@ export function NewIssueDialog() {
       description: description.trim() || undefined,
       status,
       priority: priority || "medium",
-      ...(assigneeId ? { assigneeAgentId: assigneeId } : {}),
+      ...parseAssigneeValue(assigneeValue),
       ...(projectId ? { projectId } : {}),
       ...(assigneeAdapterOverrides ? { assigneeAdapterOverrides } : {}),
     });
@@ -465,7 +516,15 @@ export function NewIssueDialog() {
   const hasDraft = title.trim().length > 0 || description.trim().length > 0;
   const currentStatus = statuses.find((s) => s.value === status) ?? statuses[1]!;
   const currentPriority = priorities.find((p) => p.value === priority);
-  const currentAssignee = (agents ?? []).find((a) => a.id === assigneeId);
+  const currentAssignee = (agents ?? []).find((a) => a.id === selectedAssigneeAgentId);
+  const activeUserMembers = useMemo(
+    () =>
+      (members ?? []).filter(
+        (member) => member.principalType === "user" && member.status === "active" && member.principalId !== "local-board",
+      ),
+    [members],
+  );
+  const currentAssigneeUser = activeUserMembers.find((member) => member.principalId === selectedAssigneeUserId);
   const currentProject = orderedProjects.find((project) => project.id === projectId);
   const assigneeOptionsTitle =
     assigneeAdapterType === "claude_local"
@@ -483,16 +542,25 @@ export function NewIssueDialog() {
       : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
-    () =>
-      sortAgentsByRecency(
+    () => [
+      ...activeUserMembers.map((member) => {
+        const label = member.userName?.trim() || member.userEmail?.trim() || member.principalId.slice(0, 8);
+        return {
+          id: `user:${member.principalId}`,
+          label,
+          searchText: `${label} ${member.userEmail ?? ""}`,
+        };
+      }),
+      ...sortAgentsByRecency(
         (agents ?? []).filter((agent) => agent.status !== "terminated"),
         recentAssigneeIds,
       ).map((agent) => ({
-        id: agent.id,
+        id: `agent:${agent.id}`,
         label: agent.name,
         searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
       })),
-    [agents, recentAssigneeIds],
+    ],
+    [activeUserMembers, agents, recentAssigneeIds],
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
@@ -663,14 +731,19 @@ export function NewIssueDialog() {
               <span>For</span>
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
-                value={assigneeId}
+                value={assigneeValue}
                 options={assigneeOptions}
                 placeholder="Assignee"
                 disablePortal
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
-                onChange={(id) => { if (id) trackRecentAssignee(id); setAssigneeId(id); }}
+                onChange={(id) => {
+                  if (id?.startsWith("agent:")) {
+                    trackRecentAssignee(id.slice("agent:".length));
+                  }
+                  setAssigneeValue(id);
+                }}
                 onConfirm={() => {
                   projectSelectorRef.current?.focus();
                 }}
@@ -680,13 +753,26 @@ export function NewIssueDialog() {
                       <AgentIcon icon={currentAssignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate">{option.label}</span>
                     </>
+                  ) : option && currentAssigneeUser ? (
+                    <>
+                      <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{option.label}</span>
+                    </>
                   ) : (
                     <span className="text-muted-foreground">Assignee</span>
                   )
                 }
                 renderOption={(option) => {
                   if (!option.id) return <span className="truncate">{option.label}</span>;
-                  const assignee = (agents ?? []).find((agent) => agent.id === option.id);
+                  if (option.id.startsWith("user:")) {
+                    return (
+                      <>
+                        <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    );
+                  }
+                  const assignee = (agents ?? []).find((agent) => agent.id === option.id.slice("agent:".length));
                   return (
                     <>
                       <AgentIcon icon={assignee?.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

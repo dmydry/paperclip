@@ -5,6 +5,7 @@ import { issuesApi } from "../api/issues";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
@@ -239,6 +240,11 @@ export function IssueDetail() {
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -291,18 +297,28 @@ export function IssueDetail() {
 
   const commentReassignOptions = useMemo(() => {
     const options: Array<{ id: string; label: string; searchText?: string }> = [];
+    const userLabel = (userId: string) => {
+      if (userId === "local-board") return "Board";
+      if (currentUserId && userId === currentUserId) return "Me (Board)";
+      const member = (members ?? []).find((item) => item.principalType === "user" && item.principalId === userId);
+      return member?.userName?.trim() || member?.userEmail?.trim() || userId.slice(0, 5);
+    };
+    for (const member of members ?? []) {
+      if (member.principalType !== "user" || member.status !== "active") continue;
+      options.push({
+        id: `user:${member.principalId}`,
+        label: userLabel(member.principalId),
+        searchText: `${member.userName ?? ""} ${member.userEmail ?? ""}`.trim(),
+      });
+    }
     const activeAgents = [...(agents ?? [])]
       .filter((agent) => agent.status !== "terminated")
       .sort((a, b) => a.name.localeCompare(b.name));
     for (const agent of activeAgents) {
       options.push({ id: `agent:${agent.id}`, label: agent.name });
     }
-    if (currentUserId) {
-      const label = currentUserId === "local-board" ? "Board" : "Me (Board)";
-      options.push({ id: `user:${currentUserId}`, label });
-    }
-    return options;
-  }, [agents, currentUserId]);
+    return options.filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
+  }, [agents, currentUserId, members]);
 
   const currentAssigneeValue = useMemo(() => {
     if (issue?.assigneeAgentId) return `agent:${issue.assigneeAgentId}`;
@@ -815,6 +831,13 @@ export function IssueDetail() {
                     return name
                       ? <Identity name={name} size="sm" />
                       : <span className="text-muted-foreground font-mono">{child.assigneeAgentId.slice(0, 8)}</span>;
+                  })()}
+                  {!child.assigneeAgentId && child.assigneeUserId && (() => {
+                    const member = (members ?? []).find((item) => item.principalType === "user" && item.principalId === child.assigneeUserId);
+                    const label = member?.userName?.trim() || member?.userEmail?.trim();
+                    return label
+                      ? <Identity name={label} size="sm" />
+                      : <span className="text-muted-foreground font-mono">{child.assigneeUserId.slice(0, 8)}</span>;
                   })()}
                 </Link>
               ))}

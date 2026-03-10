@@ -121,6 +121,59 @@ describe("codex_local ui stdout parser", () => {
     ]);
   });
 
+  it("truncates oversized command execution output in transcripts", () => {
+    const ts = "2026-02-20T00:00:00.000Z";
+    const hugeOutput = `${"a".repeat(2600)}${"b".repeat(2200)}`;
+
+    const parsed = parseCodexStdoutLine(
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item_big",
+          type: "command_execution",
+          command: "/bin/zsh -lc cat huge.txt",
+          aggregated_output: hugeOutput,
+          exit_code: 0,
+          status: "completed",
+        },
+      }),
+      ts,
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({
+      kind: "tool_result",
+      toolUseId: "item_big",
+      isError: false,
+    });
+    expect((parsed[0] as { content: string }).content).toContain("[output truncated: omitted ");
+  });
+
+  it("redacts bearer tokens and jwt env vars in command execution transcripts", () => {
+    const ts = "2026-02-20T00:00:00.000Z";
+    const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig";
+
+    const parsed = parseCodexStdoutLine(
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item_secret",
+          type: "command_execution",
+          command: `curl -H "Authorization: Bearer ${token}"`,
+          aggregated_output: `TOKEN=${token}\nAuthorization: Bearer ${token}`,
+          exit_code: 0,
+          status: "completed",
+        },
+      }),
+      ts,
+    );
+
+    const content = (parsed[0] as { content: string }).content;
+    expect(content).toContain("Authorization: Bearer [redacted]");
+    expect(content).toContain("TOKEN=[redacted]");
+    expect(content).not.toContain(token);
+  });
+
   it("parses error items and failed turns", () => {
     const ts = "2026-02-20T00:00:00.000Z";
 
@@ -244,6 +297,68 @@ describe("codex_local cli formatter", () => {
         "tokens: in=10 out=4 cached=2",
         "error: resume model mismatch",
       ]));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("truncates oversized command output in CLI logs", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const hugeOutput = `${"a".repeat(2600)}${"b".repeat(2200)}`;
+
+    try {
+      printCodexStreamEvent(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_big",
+            type: "command_execution",
+            command: "/bin/zsh -lc cat huge.txt",
+            aggregated_output: hugeOutput,
+            exit_code: 0,
+            status: "completed",
+          },
+        }),
+        false,
+      );
+
+      const lines = spy.mock.calls
+        .map((call) => call.map((v) => String(v)).join(" "))
+        .map(stripAnsi)
+        .join("\n");
+      expect(lines).toContain("[output truncated: omitted ");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("redacts bearer tokens and jwt env vars in CLI logs", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig";
+
+    try {
+      printCodexStreamEvent(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_secret",
+            type: "command_execution",
+            command: `curl -H "Authorization: Bearer ${token}"`,
+            aggregated_output: `PAPERCLIP_API_KEY=${token}`,
+            exit_code: 0,
+            status: "completed",
+          },
+        }),
+        false,
+      );
+
+      const lines = spy.mock.calls
+        .map((call) => call.map((v) => String(v)).join(" "))
+        .map(stripAnsi)
+        .join("\n");
+      expect(lines).toContain("Authorization: Bearer [redacted]");
+      expect(lines).toContain("PAPERCLIP_API_KEY=[redacted]");
+      expect(lines).not.toContain(token);
     } finally {
       spy.mockRestore();
     }

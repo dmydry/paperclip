@@ -78,6 +78,19 @@ type CompanyInviteCreated = {
   inviteMessage?: string | null;
 };
 
+export type CompanyMember = {
+  id: string;
+  companyId: string;
+  principalType: "user" | "agent";
+  principalId: string;
+  status: string;
+  membershipRole: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userName?: string | null;
+  userEmail?: string | null;
+};
+
 export const accessApi = {
   createCompanyInvite: (
     companyId: string,
@@ -112,6 +125,9 @@ export const accessApi = {
 
   listJoinRequests: (companyId: string, status: "pending_approval" | "approved" | "rejected" = "pending_approval") =>
     api.get<JoinRequest[]>(`/companies/${companyId}/join-requests?status=${status}`),
+
+  listMembers: (companyId: string) =>
+    api.get<CompanyMember[]>(`/companies/${companyId}/members`),
 
   approveJoinRequest: (companyId: string, requestId: string) =>
     api.post<JoinRequest>(`/companies/${companyId}/join-requests/${requestId}/approve`, {}),

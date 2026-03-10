@@ -44,6 +44,7 @@ interface Agent {
 interface KanbanBoardProps {
   issues: Issue[];
   agents?: Agent[];
+  userName?: (id: string | null) => string | null;
   liveIssueIds?: Set<string>;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
@@ -54,11 +55,13 @@ function KanbanColumn({
   status,
   issues,
   agents,
+  userName,
   liveIssueIds,
 }: {
   status: string;
   issues: Issue[];
   agents?: Agent[];
+  userName?: (id: string | null) => string | null;
   liveIssueIds?: Set<string>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
@@ -89,6 +92,7 @@ function KanbanColumn({
               key={issue.id}
               issue={issue}
               agents={agents}
+              userName={userName}
               isLive={liveIssueIds?.has(issue.id)}
             />
           ))}
@@ -103,11 +107,13 @@ function KanbanColumn({
 function KanbanCard({
   issue,
   agents,
+  userName,
   isLive,
   isOverlay,
 }: {
   issue: Issue;
   agents?: Agent[];
+  userName?: (id: string | null) => string | null;
   isLive?: boolean;
   isOverlay?: boolean;
 }) {
@@ -172,6 +178,16 @@ function KanbanCard({
               </span>
             );
           })()}
+          {!issue.assigneeAgentId && issue.assigneeUserId && (() => {
+            const name = userName?.(issue.assigneeUserId);
+            return name ? (
+              <Identity name={name} size="xs" />
+            ) : (
+              <span className="text-xs text-muted-foreground font-mono">
+                {issue.assigneeUserId.slice(0, 8)}
+              </span>
+            );
+          })()}
         </div>
       </Link>
     </div>
@@ -183,6 +199,7 @@ function KanbanCard({
 export function KanbanBoard({
   issues,
   agents,
+  userName,
   liveIssueIds,
   onUpdateIssue,
 }: KanbanBoardProps) {
@@ -260,13 +277,14 @@ export function KanbanBoard({
             status={status}
             issues={columnIssues[status] ?? []}
             agents={agents}
+            userName={userName}
             liveIssueIds={liveIssueIds}
           />
         ))}
       </div>
       <DragOverlay>
         {activeIssue ? (
-          <KanbanCard issue={activeIssue} agents={agents} isOverlay />
+          <KanbanCard issue={activeIssue} agents={agents} userName={userName} isOverlay />
         ) : null}
       </DragOverlay>
     </DndContext>
