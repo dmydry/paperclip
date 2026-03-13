@@ -150,7 +150,10 @@ function loadDraft(): IssueDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<IssueDraft> & { assigneeId?: string };
+    const parsed = JSON.parse(raw) as Partial<IssueDraft> & {
+      assigneeId?: string;
+      assigneeUseProjectWorkspace?: boolean;
+    };
     return {
       title: parsed.title ?? "",
       description: parsed.description ?? "",
@@ -161,7 +164,8 @@ function loadDraft(): IssueDraft | null {
       assigneeModelOverride: parsed.assigneeModelOverride ?? "",
       assigneeThinkingEffort: parsed.assigneeThinkingEffort ?? "",
       assigneeChrome: parsed.assigneeChrome ?? false,
-      assigneeUseProjectWorkspace: parsed.assigneeUseProjectWorkspace ?? true,
+      useIsolatedExecutionWorkspace:
+        parsed.useIsolatedExecutionWorkspace ?? !parsed.assigneeUseProjectWorkspace,
     };
   } catch {
     return null;
