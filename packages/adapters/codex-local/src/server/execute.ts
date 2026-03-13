@@ -13,17 +13,16 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensurePaperclipSkillSymlink,
   ensurePathInEnv,
+  listPaperclipSkillEntries,
+  removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const PAPERCLIP_SKILLS_CANDIDATES = [
-  path.resolve(__moduleDir, "../../skills"),         // published: <pkg>/dist/server/ -> <pkg>/skills/
-  path.resolve(__moduleDir, "../../../../../skills"), // dev: src/server/ -> repo root/skills/
-];
 const CODEX_ROLLOUT_NOISE_RE =
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::rollout::list:\s+state db missing rollout path for thread\s+[a-z0-9-]+$/i;
 const TOKEN_DISCIPLINE_INSTRUCTIONS = `Token discipline rules (required):
@@ -75,33 +74,42 @@ function codexHomeDir(): string {
   return path.join(os.homedir(), ".codex");
 }
 
-async function resolvePaperclipSkillsDir(): Promise<string | null> {
-  for (const candidate of PAPERCLIP_SKILLS_CANDIDATES) {
-    const isDir = await fs.stat(candidate).then((s) => s.isDirectory()).catch(() => false);
-    if (isDir) return candidate;
-  }
-  return null;
-}
+type EnsureCodexSkillsInjectedOptions = {
+  skillsHome?: string;
+  skillsEntries?: Awaited<ReturnType<typeof listPaperclipSkillEntries>>;
+  linkSkill?: (source: string, target: string) => Promise<void>;
+};
 
-async function ensureCodexSkillsInjected(onLog: AdapterExecutionContext["onLog"]) {
-  const skillsDir = await resolvePaperclipSkillsDir();
-  if (!skillsDir) return;
+export async function ensureCodexSkillsInjected(
+  onLog: AdapterExecutionContext["onLog"],
+  options: EnsureCodexSkillsInjectedOptions = {},
+) {
+  const skillsEntries = options.skillsEntries ?? await listPaperclipSkillEntries(__moduleDir);
+  if (skillsEntries.length === 0) return;
 
-  const skillsHome = path.join(codexHomeDir(), "skills");
+  const skillsHome = options.skillsHome ?? path.join(codexHomeDir(), "skills");
   await fs.mkdir(skillsHome, { recursive: true });
-  const entries = await fs.readdir(skillsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const source = path.join(skillsDir, entry.name);
+  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+    skillsHome,
+    skillsEntries.map((entry) => entry.name),
+  );
+  for (const skillName of removedSkills) {
+    await onLog(
+      "stderr",
+      `[paperclip] Removed maintainer-only Codex skill "${skillName}" from ${skillsHome}\n`,
+    );
+  }
+  const linkSkill = options.linkSkill;
+  for (const entry of skillsEntries) {
     const target = path.join(skillsHome, entry.name);
-    const existing = await fs.lstat(target).catch(() => null);
-    if (existing) continue;
 
     try {
-      await fs.symlink(source, target);
+      const result = await ensurePaperclipSkillSymlink(entry.source, target, linkSkill);
+      if (result === "skipped") continue;
+
       await onLog(
         "stderr",
-        `[paperclip] Injected Codex skill "${entry.name}" into ${skillsHome}\n`,
+        `[paperclip] ${result === "repaired" ? "Repaired" : "Injected"} Codex skill "${entry.name}" into ${skillsHome}\n`,
       );
     } catch (err) {
       await onLog(
@@ -134,14 +142,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
   const workspaceSource = asString(workspaceContext.source, "");
+  const workspaceStrategy = asString(workspaceContext.strategy, "");
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBranch = asString(workspaceContext.branchName, "");
+  const workspaceWorktreePath = asString(workspaceContext.worktreePath, "");
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
     ? context.paperclipWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
       )
     : [];
+  const runtimeServiceIntents = Array.isArray(context.paperclipRuntimeServiceIntents)
+    ? context.paperclipRuntimeServiceIntents.filter(
+        (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+      )
+    : [];
+  const runtimeServices = Array.isArray(context.paperclipRuntimeServices)
+    ? context.paperclipRuntimeServices.filter(
+        (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+      )
+    : [];
+  const runtimePrimaryUrl = asString(context.paperclipRuntimePrimaryUrl, "");
   const configuredCwd = asString(config.cwd, "");
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
@@ -200,6 +222,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (workspaceSource) {
     env.PAPERCLIP_WORKSPACE_SOURCE = workspaceSource;
   }
+  if (workspaceStrategy) {
+    env.PAPERCLIP_WORKSPACE_STRATEGY = workspaceStrategy;
+  }
   if (workspaceId) {
     env.PAPERCLIP_WORKSPACE_ID = workspaceId;
   }
@@ -209,8 +234,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (workspaceRepoRef) {
     env.PAPERCLIP_WORKSPACE_REPO_REF = workspaceRepoRef;
   }
+  if (workspaceBranch) {
+    env.PAPERCLIP_WORKSPACE_BRANCH = workspaceBranch;
+  }
+  if (workspaceWorktreePath) {
+    env.PAPERCLIP_WORKSPACE_WORKTREE_PATH = workspaceWorktreePath;
+  }
   if (workspaceHints.length > 0) {
     env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(workspaceHints);
+  }
+  if (runtimeServiceIntents.length > 0) {
+    env.PAPERCLIP_RUNTIME_SERVICE_INTENTS_JSON = JSON.stringify(runtimeServiceIntents);
+  }
+  if (runtimeServices.length > 0) {
+    env.PAPERCLIP_RUNTIME_SERVICES_JSON = JSON.stringify(runtimeServices);
+  }
+  if (runtimePrimaryUrl) {
+    env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
