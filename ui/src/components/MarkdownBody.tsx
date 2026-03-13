@@ -10,6 +10,13 @@ interface MarkdownBodyProps {
   className?: string;
 }
 
+function normalizeEscapedNewlines(markdown: string): string {
+  // Some agent comments were posted with literal "\n" sequences after shell expansion.
+  // Render them as markdown line breaks when no real newlines survived transport.
+  if (!markdown.includes("\\n") || markdown.includes("\n")) return markdown;
+  return markdown.replace(/\\n/g, "\n");
+}
+
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
 
 function loadMermaid() {
@@ -114,6 +121,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
 
 export function MarkdownBody({ children, className }: MarkdownBodyProps) {
   const { theme } = useTheme();
+  const normalized = normalizeEscapedNewlines(children);
   return (
     <div
       className={cn(
@@ -154,7 +162,7 @@ export function MarkdownBody({ children, className }: MarkdownBodyProps) {
           },
         }}
       >
-        {children}
+        {normalized}
       </Markdown>
     </div>
   );

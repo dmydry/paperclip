@@ -33,6 +33,7 @@ import {
   ToggleWithNumber,
   CollapsibleSection,
   DraftInput,
+  DraftTextarea,
   DraftNumberInput,
   help,
   adapterLabels,
@@ -435,20 +436,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
             {isLocal && (
               <Field label="Prompt Template" hint={help.promptTemplate}>
-                <MarkdownEditor
+                <DraftTextarea
                   value={eff(
                     "adapterConfig",
                     "promptTemplate",
                     String(config.promptTemplate ?? ""),
                   )}
-                  onChange={(v) => mark("adapterConfig", "promptTemplate", v ?? "")}
+                  onCommit={(v) => mark("adapterConfig", "promptTemplate", v ?? "")}
+                  immediate
+                  minRows={5}
                   placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
-                  contentClassName="min-h-[88px] text-sm font-mono"
-                  imageUploadHandler={async (file) => {
-                    const namespace = `agents/${props.agent.id}/prompt-template`;
-                    const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
-                    return asset.contentPath;
-                  }}
                 />
               </Field>
             )}
@@ -563,16 +560,12 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           {/* Prompt template (create mode only — edit mode shows this in Identity) */}
           {isLocal && isCreate && (
             <Field label="Prompt Template" hint={help.promptTemplate}>
-              <MarkdownEditor
+              <DraftTextarea
                 value={val!.promptTemplate}
-                onChange={(v) => set!({ promptTemplate: v })}
+                onCommit={(v) => set!({ promptTemplate: v })}
+                immediate
+                minRows={5}
                 placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
-                contentClassName="min-h-[88px] text-sm font-mono"
-                imageUploadHandler={async (file) => {
-                  const namespace = "agents/drafts/prompt-template";
-                  const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
-                  return asset.contentPath;
-                }}
               />
             </Field>
           )}
