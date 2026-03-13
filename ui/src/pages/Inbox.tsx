@@ -43,6 +43,7 @@ import type { HeartbeatRun, Issue, JoinRequest } from "@paperclipai/shared";
 
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 const RECENT_ISSUES_LIMIT = 100;
+const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
 const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);
 const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending", "revision_requested"]);
 
@@ -379,7 +380,19 @@ export function Inbox() {
     queryFn: () =>
       issuesApi.list(selectedCompanyId!, {
         touchedByUserId: "me",
-        status: "backlog,todo,in_progress,in_review,blocked,done",
+        status: INBOX_ISSUE_STATUSES,
+      }),
+    enabled: !!selectedCompanyId,
+  });
+  const {
+    data: unreadTouchedIssuesRaw = [],
+    isLoading: isUnreadTouchedIssuesLoading,
+  } = useQuery({
+    queryKey: queryKeys.issues.listUnreadTouchedByMe(selectedCompanyId!),
+    queryFn: () =>
+      issuesApi.list(selectedCompanyId!, {
+        unreadForUserId: "me",
+        status: INBOX_ISSUE_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });
@@ -406,6 +419,14 @@ export function Inbox() {
   const touchedIssues = useMemo(
     () => [...touchedIssuesRaw].sort(sortByMostRecentActivity).slice(0, RECENT_ISSUES_LIMIT),
     [sortByMostRecentActivity, touchedIssuesRaw],
+  );
+  const unreadTouchedIssues = useMemo(
+    () =>
+      [...unreadTouchedIssuesRaw]
+        .filter((issue) => issue.isUnreadForMe)
+        .sort(sortByMostRecentActivity)
+        .slice(0, RECENT_ISSUES_LIMIT),
+    [sortByMostRecentActivity, unreadTouchedIssuesRaw],
   );
 
   const agentById = useMemo(() => {
@@ -548,12 +569,12 @@ export function Inbox() {
   const hasStale = staleIssues.length > 0;
   const hasJoinRequests = joinRequests.length > 0;
   const hasTouchedIssues = touchedIssues.length > 0;
+  const hasUnreadTouchedIssues = unreadTouchedIssues.length > 0;
 
   const newItemCount =
-    failedRuns.length +
-    staleIssues.length +
-    (showAggregateAgentError ? 1 : 0) +
-    (showBudgetAlert ? 1 : 0);
+    actionableApprovals.length +
+    joinRequests.length +
+    unreadTouchedIssues.length;
 
   const showJoinRequestsCategory =
     allCategoryFilter === "everything" || allCategoryFilter === "join_requests";
@@ -566,7 +587,6 @@ export function Inbox() {
   const showStaleCategory = allCategoryFilter === "everything" || allCategoryFilter === "stale_work";
 
   const approvalsToRender = tab === "new" ? actionableApprovals : filteredAllApprovals;
-  const showTouchedSection = tab === "new" ? hasTouchedIssues : showTouchedCategory && hasTouchedIssues;
   const showJoinRequestsSection =
     tab === "new" ? hasJoinRequests : showJoinRequestsCategory && hasJoinRequests;
   const showApprovalsSection =
@@ -577,6 +597,8 @@ export function Inbox() {
     tab === "new" ? hasRunFailures : showFailedRunsCategory && hasRunFailures;
   const showAlertsSection = tab === "new" ? hasAlerts : showAlertsCategory && hasAlerts;
   const showStaleSection = tab === "new" ? hasStale : showStaleCategory && hasStale;
+  const touchedIssuesToRender = tab === "new" ? unreadTouchedIssues : touchedIssues;
+  const showTouchedSection = tab === "new" ? hasUnreadTouchedIssues : showTouchedCategory && hasTouchedIssues;
 
   const visibleSections = [
     showFailedRunsSection ? "failed_runs" : null,
@@ -593,6 +615,7 @@ export function Inbox() {
     !isDashboardLoading &&
     !isIssuesLoading &&
     !isTouchedIssuesLoading &&
+    !isUnreadTouchedIssuesLoading &&
     !isRunsLoading;
 
   const showSeparatorBefore = (key: SectionKey) => visibleSections.indexOf(key) > 0;
@@ -672,7 +695,7 @@ export function Inbox() {
           icon={InboxIcon}
           message={
             tab === "new"
-              ? "No issues you're involved in yet."
+              ? "Nothing needs your attention right now."
               : "No inbox items match these filters."
           }
         />
@@ -912,10 +935,10 @@ export function Inbox() {
           {showSeparatorBefore("issues_i_touched") && <Separator />}
           <div>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              My Recent Issues
+              {tab === "new" ? "Issues Needing Attention" : "My Recent Issues"}
             </h3>
             <div className="divide-y divide-border border border-border">
-              {touchedIssues.map((issue) => {
+              {touchedIssuesToRender.map((issue) => {
                 const isUnread = issue.isUnreadForMe && !fadingOutIssues.has(issue.id);
                 const isFading = fadingOutIssues.has(issue.id);
                 return (
