@@ -667,6 +667,17 @@ export function shouldEscalateDirtyCodeTaskStall(input: {
   return input.autoResumeAttempt >= INCOMPLETE_CODE_TASK_AUTO_RESUME_MAX_ATTEMPTS;
 }
 
+export function requiresIsolatedWorkspaceGuard(input: {
+  executionWorkspaceMode: ExecutionWorkspaceModeForWake;
+  resolvedWorkspace: Pick<ResolvedWorkspaceForRun, "cwd">;
+  executionWorkspace: Pick<RealizedExecutionWorkspace, "cwd" | "strategy" | "worktreePath">;
+}) {
+  if (input.executionWorkspaceMode !== "isolated_workspace") return false;
+  if (input.executionWorkspace.strategy !== "git_worktree") return true;
+  if (!input.executionWorkspace.worktreePath) return true;
+  return path.resolve(input.executionWorkspace.cwd) === path.resolve(input.resolvedWorkspace.cwd);
+}
+
 const defaultSessionCodec: AdapterSessionCodec = {
   deserialize(raw: unknown) {
     const asObj = parseObject(raw);
@@ -1926,6 +1937,18 @@ export function heartbeatService(db: Db) {
       },
       recorder: workspaceOperationRecorder,
     });
+    if (
+      requiresIsolatedWorkspaceGuard({
+        executionWorkspaceMode,
+        resolvedWorkspace,
+        executionWorkspace,
+      })
+    ) {
+      const issueLabel = issueContext?.identifier ?? issueId ?? "project-linked run";
+      throw new Error(
+        `Isolated workspace required for ${issueLabel}, but runtime resolved "${executionWorkspace.cwd}" without a task-scoped git worktree.`,
+      );
+    }
     const resolvedProjectId = executionWorkspace.projectId ?? issueRef?.projectId ?? executionProjectId ?? null;
     const resolvedProjectWorkspaceId = issueRef?.projectWorkspaceId ?? resolvedWorkspace.workspaceId ?? null;
     const shouldReuseExisting =

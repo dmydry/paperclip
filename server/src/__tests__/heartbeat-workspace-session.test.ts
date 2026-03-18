@@ -4,6 +4,7 @@ import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
   prioritizeProjectWorkspaceCandidatesForRun,
   parseSessionCompactionPolicy,
+  requiresIsolatedWorkspaceGuard,
   resolveRuntimeSessionParamsForWorkspace,
   shouldAutoResumeDirtyCodeTask,
   shouldEscalateDirtyCodeTaskStall,
@@ -400,5 +401,45 @@ describe("dirty git worktree completion guard", () => {
         autoResumeAttempt: 1,
       }),
     ).toBe(true);
+  });
+});
+
+describe("requiresIsolatedWorkspaceGuard", () => {
+  it("flags isolated-mode runs that stayed on the base project clone", () => {
+    expect(
+      requiresIsolatedWorkspaceGuard({
+        executionWorkspaceMode: "isolated_workspace",
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
+        executionWorkspace: buildRealizedWorkspace({
+          cwd: "/tmp/project",
+          strategy: "project_primary",
+          worktreePath: null,
+        }),
+      }),
+    ).toBe(true);
+  });
+
+  it("allows isolated-mode runs that realized a task worktree", () => {
+    expect(
+      requiresIsolatedWorkspaceGuard({
+        executionWorkspaceMode: "isolated_workspace",
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
+        executionWorkspace: buildRealizedWorkspace(),
+      }),
+    ).toBe(false);
+  });
+
+  it("does not guard shared-workspace runs", () => {
+    expect(
+      requiresIsolatedWorkspaceGuard({
+        executionWorkspaceMode: "shared_workspace",
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
+        executionWorkspace: buildRealizedWorkspace({
+          cwd: "/tmp/project",
+          strategy: "project_primary",
+          worktreePath: null,
+        }),
+      }),
+    ).toBe(false);
   });
 });
