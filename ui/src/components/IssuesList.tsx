@@ -4,7 +4,9 @@ import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { issuesApi } from "../api/issues";
 import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
+import { formatAssigneeUserLabel } from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
 import { formatDate, cn } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
@@ -94,15 +96,21 @@ function assigneeFilterValue(issue: Issue): string | null {
   return null;
 }
 
-function applyFilters(issues: Issue[], state: IssueViewState): Issue[] {
+function applyFilters(issues: Issue[], state: IssueViewState, currentUserId?: string | null): Issue[] {
   let result = issues;
   if (state.statuses.length > 0) result = result.filter((i) => state.statuses.includes(i.status));
   if (state.priorities.length > 0) result = result.filter((i) => state.priorities.includes(i.priority));
   if (state.assignees.length > 0) {
     result = result.filter((issue) => {
       const value = assigneeFilterValue(issue);
+      if (state.assignees.includes("__unassigned") && !value) return true;
+      if (state.assignees.includes("__me") && currentUserId && issue.assigneeUserId === currentUserId) return true;
       if (!value) return false;
-      return state.assignees.includes(value) || state.assignees.includes(value.replace(/^(agent|user):/, ""));
+      return (
+        state.assignees.includes(value) ||
+        (issue.assigneeAgentId ? state.assignees.includes(issue.assigneeAgentId) : false) ||
+        (issue.assigneeUserId ? state.assignees.includes(issue.assigneeUserId) : false)
+      );
     });
   }
   if (state.labels.length > 0) result = result.filter((i) => (i.labelIds ?? []).some((id) => state.labels.includes(id)));
@@ -178,6 +186,11 @@ export function IssuesList({
 }: IssuesListProps) {
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialog();
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
   // Scope the storage key per company so folding/view state is independent across companies.
   const scopedKey = selectedCompanyId ? `${viewStateKey}:${selectedCompanyId}` : viewStateKey;
@@ -244,12 +257,19 @@ export function IssuesList({
     const member = members.find((item) => item.principalType === "user" && item.principalId === id);
     return member?.userName?.trim() || member?.userEmail?.trim() || null;
   }, [members]);
+  const activeUserMembers = useMemo(
+    () =>
+      (members ?? []).filter(
+        (member) => member.principalType === "user" && member.status === "active" && member.principalId !== "local-board",
+      ),
+    [members],
+  );
 
   const filtered = useMemo(() => {
     const sourceIssues = normalizedIssueSearch.length > 0 ? searchedIssues : issues;
-    const filteredByControls = applyFilters(sourceIssues, viewState);
+    const filteredByControls = applyFilters(sourceIssues, viewState, currentUserId);
     return sortIssues(filteredByControls, viewState);
-  }, [issues, searchedIssues, viewState, normalizedIssueSearch]);
+  }, [issues, searchedIssues, viewState, normalizedIssueSearch, currentUserId]);
 
   const { data: labels } = useQuery({
     queryKey: queryKeys.issues.labels(selectedCompanyId!),
@@ -284,10 +304,14 @@ export function IssuesList({
           ? "Unassigned"
           : key.startsWith("agent:")
             ? (agentName(key.slice("agent:".length)) ?? key.slice("agent:".length, "agent:".length + 8))
-            : (userName(key.slice("user:".length)) ?? key.slice("user:".length, "user:".length + 8)),
+            : (
+              userName(key.slice("user:".length))
+              ?? formatAssigneeUserLabel(key.slice("user:".length), currentUserId)
+              ?? "User"
+            ),
       items: groups[key]!,
     }));
-  }, [filtered, viewState.groupBy, agentName, userName]);
+  }, [filtered, viewState.groupBy, agentName, userName, currentUserId]);
 
   const newIssueDefaults = (groupKey?: string) => {
     const defaults: Record<string, string> = {};
@@ -303,11 +327,8 @@ export function IssuesList({
     return defaults;
   };
 
-  const assignIssue = (
-    issueId: string,
-    assignee: { assigneeAgentId: string | null; assigneeUserId: string | null },
-  ) => {
-    onUpdateIssue(issueId, assignee);
+  const assignIssue = (issueId: string, assigneeAgentId: string | null, assigneeUserId: string | null = null) => {
+    onUpdateIssue(issueId, { assigneeAgentId, assigneeUserId });
     setAssigneePickerIssueId(null);
     setAssigneeSearch("");
   };
@@ -453,22 +474,37 @@ export function IssuesList({
                     </div>
 
                     {/* Assignee */}
-                    {agents && agents.length > 0 && (
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Assignee</span>
-                        <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                          {agents.map((agent) => (
-                            <label key={agent.id} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
-                              <Checkbox
-                                checked={viewState.assignees.includes(agent.id)}
-                                onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, agent.id) })}
-                              />
-                              <span className="text-sm">{agent.name}</span>
-                            </label>
-                          ))}
-                        </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">Assignee</span>
+                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                        <label className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
+                          <Checkbox
+                            checked={viewState.assignees.includes("__unassigned")}
+                            onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, "__unassigned") })}
+                          />
+                          <span className="text-sm">No assignee</span>
+                        </label>
+                        {currentUserId && (
+                          <label className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
+                            <Checkbox
+                              checked={viewState.assignees.includes("__me")}
+                              onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, "__me") })}
+                            />
+                            <User className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-sm">Me</span>
+                          </label>
+                        )}
+                        {(agents ?? []).map((agent) => (
+                          <label key={agent.id} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
+                            <Checkbox
+                              checked={viewState.assignees.includes(agent.id)}
+                              onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, agent.id) })}
+                            />
+                            <span className="text-sm">{agent.name}</span>
+                          </label>
+                        ))}
                       </div>
-                    )}
+                    </div>
 
                     {labels && labels.length > 0 && (
                       <div className="space-y-1">
@@ -717,8 +753,13 @@ export function IssuesList({
                           >
                             {issue.assigneeAgentId && agentName(issue.assigneeAgentId) ? (
                               <Identity name={agentName(issue.assigneeAgentId)!} size="sm" />
-                            ) : issue.assigneeUserId && userName(issue.assigneeUserId) ? (
-                              <Identity name={userName(issue.assigneeUserId)!} size="sm" />
+                            ) : issue.assigneeUserId ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs">
+                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30">
+                                  <User className="h-3 w-3" />
+                                </span>
+                                {userName(issue.assigneeUserId) ?? formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? "User"}
+                              </span>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30">
@@ -751,20 +792,29 @@ export function IssuesList({
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                assignIssue(issue.id, { assigneeAgentId: null, assigneeUserId: null });
+                                assignIssue(issue.id, null, null);
                               }}
                             >
                               No assignee
                             </button>
-                            {(members ?? [])
+                            {currentUserId && !activeUserMembers.some((member) => member.principalId === currentUserId) && (
+                              <button
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/50",
+                                  issue.assigneeUserId === currentUserId && "bg-accent",
+                                )}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  assignIssue(issue.id, null, currentUserId);
+                                }}
+                              >
+                                <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span>Me</span>
+                              </button>
+                            )}
+                            {activeUserMembers
                               .filter((member) => {
-                                if (
-                                  member.principalType !== "user" ||
-                                  member.status !== "active" ||
-                                  member.principalId === "local-board"
-                                ) {
-                                  return false;
-                                }
                                 if (!assigneeSearch.trim()) return true;
                                 const label = member.userName?.trim() || member.userEmail?.trim() || member.principalId;
                                 const query = assigneeSearch.toLowerCase();
@@ -788,13 +838,13 @@ export function IssuesList({
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      assignIssue(issue.id, {
-                                        assigneeAgentId: null,
-                                        assigneeUserId: member.principalId,
-                                      });
+                                      assignIssue(issue.id, null, member.principalId);
                                     }}
                                   >
-                                    <Identity name={label} size="sm" className="min-w-0" />
+                                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30">
+                                      <User className="h-3 w-3" />
+                                    </span>
+                                    <span className="truncate">{label}</span>
                                   </button>
                                 );
                               })}
@@ -815,10 +865,7 @@ export function IssuesList({
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    assignIssue(issue.id, {
-                                      assigneeAgentId: agent.id,
-                                      assigneeUserId: null,
-                                    });
+                                    assignIssue(issue.id, agent.id, null);
                                   }}
                                 >
                                   <Identity name={agent.name} size="sm" className="min-w-0" />
