@@ -232,8 +232,43 @@ async function runGit(args: string[], cwd: string): Promise<string> {
   return proc.stdout.trim();
 }
 
+export async function getGitWorktreeStatus(worktreePath: string): Promise<{
+  dirty: boolean;
+  entries: string[];
+}> {
+  const stdout = await runGit(["status", "--porcelain"], worktreePath);
+  const entries = stdout
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  return {
+    dirty: entries.length > 0,
+    entries,
+  };
+}
+
 async function directoryExists(value: string) {
   return fs.stat(value).then((stats) => stats.isDirectory()).catch(() => false);
+}
+
+function parseRemoteTrackingRef(value: string): { remote: string; branch: string } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.startsWith("refs/remotes/") ? trimmed.slice("refs/remotes/".length) : trimmed;
+  const firstSlash = normalized.indexOf("/");
+  if (firstSlash <= 0 || firstSlash === normalized.length - 1) return null;
+  const remote = normalized.slice(0, firstSlash).trim();
+  const branch = normalized.slice(firstSlash + 1).trim();
+  if (!remote || !branch) return null;
+  return { remote, branch };
+}
+
+async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string) {
+  const parsed = parseRemoteTrackingRef(baseRef);
+  if (!parsed) return;
+  const remoteBranchRef = `refs/heads/${parsed.branch}`;
+  const localTrackingRef = `refs/remotes/${parsed.remote}/${parsed.branch}`;
+  await runGit(["fetch", "--prune", parsed.remote, `+${remoteBranchRef}:${localTrackingRef}`], repoRoot);
 }
 
 function buildWorkspaceCommandEnv(input: {
@@ -395,6 +430,7 @@ export async function realizeExecutionWorkspace(input: {
     throw new Error(`Configured worktree path "${worktreePath}" already exists and is not a git worktree.`);
   }
 
+  await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
   await runGit(["worktree", "add", "-B", branchName, worktreePath, baseRef], repoRoot);
   await provisionExecutionWorktree({
     strategy: rawStrategy,

@@ -28,9 +28,11 @@ import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import {
   buildWorkspaceReadyComment,
   ensureRuntimeServicesForRun,
+  getGitWorktreeStatus,
   persistAdapterManagedRuntimeServices,
   realizeExecutionWorkspace,
   releaseRuntimeServicesForRun,
+  type RealizedExecutionWorkspace,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
 import {
@@ -45,6 +47,7 @@ const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
+const INCOMPLETE_CODE_TASK_AUTO_RESUME_MAX_ATTEMPTS = 1;
 const startLocksByAgent = new Map<string, Promise<void>>();
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 
@@ -256,6 +259,19 @@ export function shouldResetTaskSessionForWake(
   return wakeSource === "on_demand" && wakeTriggerDetail === "manual";
 }
 
+export function shouldResetTaskSessionForTodoCodeCommentWake(input: {
+  wakeReason: string | null;
+  issueStatus: string | null;
+  executionWorkspaceMode: "project_primary" | "isolated" | "agent_default";
+  hasTaskSession: boolean;
+}) {
+  const { wakeReason, issueStatus, executionWorkspaceMode, hasTaskSession } = input;
+  if (!hasTaskSession) return false;
+  if (executionWorkspaceMode === "agent_default") return false;
+  if (issueStatus !== "todo") return false;
+  return wakeReason === "issue_commented" || wakeReason === "issue_reopened_via_comment";
+}
+
 function describeSessionResetReason(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
@@ -270,6 +286,16 @@ function describeSessionResetReason(
     return "this is a manual invoke";
   }
   return null;
+}
+
+function describeTodoCodeCommentResetReason(input: {
+  wakeReason: string | null;
+  issueStatus: string | null;
+  executionWorkspaceMode: "project_primary" | "isolated" | "agent_default";
+  hasTaskSession: boolean;
+}) {
+  if (!shouldResetTaskSessionForTodoCodeCommentWake(input)) return null;
+  return `issue is ${input.issueStatus} and woke via ${input.wakeReason} in a project-linked code workspace`;
 }
 
 function deriveCommentId(
@@ -365,6 +391,44 @@ function normalizeAgentNameKey(value: string | null | undefined) {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
+}
+
+function readAutoResumeAttempt(contextSnapshot: Record<string, unknown> | null | undefined) {
+  const raw = Math.floor(asNumber(contextSnapshot?.autoResumeDirtyWorktreeAttempt, 0));
+  if (!Number.isFinite(raw) || raw < 0) return 0;
+  return raw;
+}
+
+export function shouldAutoResumeDirtyCodeTask(input: {
+  issueStatus: string | null | undefined;
+  issueAssigneeAgentId: string | null | undefined;
+  currentAgentId: string;
+  workspace: Pick<RealizedExecutionWorkspace, "strategy" | "worktreePath">;
+  worktreeDirty: boolean;
+  autoResumeAttempt: number;
+}) {
+  if (input.issueStatus !== "in_progress") return false;
+  if (input.issueAssigneeAgentId !== input.currentAgentId) return false;
+  if (input.workspace.strategy !== "git_worktree") return false;
+  if (!input.workspace.worktreePath) return false;
+  if (!input.worktreeDirty) return false;
+  return input.autoResumeAttempt < INCOMPLETE_CODE_TASK_AUTO_RESUME_MAX_ATTEMPTS;
+}
+
+export function shouldEscalateDirtyCodeTaskStall(input: {
+  issueStatus: string | null | undefined;
+  issueAssigneeAgentId: string | null | undefined;
+  currentAgentId: string;
+  workspace: Pick<RealizedExecutionWorkspace, "strategy" | "worktreePath">;
+  worktreeDirty: boolean;
+  autoResumeAttempt: number;
+}) {
+  if (input.issueStatus !== "in_progress") return false;
+  if (input.issueAssigneeAgentId !== input.currentAgentId) return false;
+  if (input.workspace.strategy !== "git_worktree") return false;
+  if (!input.workspace.worktreePath) return false;
+  if (!input.worktreeDirty) return false;
+  return input.autoResumeAttempt >= INCOMPLETE_CODE_TASK_AUTO_RESUME_MAX_ATTEMPTS;
 }
 
 const defaultSessionCodec: AdapterSessionCodec = {
@@ -525,6 +589,106 @@ export function heartbeatService(db: Db) {
 
     const runtimeForRun = await getRuntimeState(agent.id);
     return runtimeForRun?.sessionId ?? null;
+  }
+
+  async function handleIncompleteDirtyCodeTaskRun(input: {
+    run: typeof heartbeatRuns.$inferSelect;
+    agent: typeof agents.$inferSelect;
+    issueId: string | null;
+    taskKey: string | null;
+    workspace: RealizedExecutionWorkspace;
+  }) {
+    const { run, agent, issueId, taskKey, workspace } = input;
+    if (!issueId || workspace.strategy !== "git_worktree" || !workspace.worktreePath) return;
+
+    const issue = await db
+      .select({
+        id: issues.id,
+        identifier: issues.identifier,
+        status: issues.status,
+        assigneeAgentId: issues.assigneeAgentId,
+      })
+      .from(issues)
+      .where(and(eq(issues.id, issueId), eq(issues.companyId, run.companyId)))
+      .then((rows) => rows[0] ?? null);
+    if (!issue) return;
+
+    let worktreeStatus: Awaited<ReturnType<typeof getGitWorktreeStatus>>;
+    try {
+      worktreeStatus = await getGitWorktreeStatus(workspace.worktreePath);
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          runId: run.id,
+          issueId,
+          worktreePath: workspace.worktreePath,
+        },
+        "failed to inspect git worktree status after successful run",
+      );
+      return;
+    }
+
+    const autoResumeAttempt = readAutoResumeAttempt(parseObject(run.contextSnapshot));
+    const guardInput = {
+      issueStatus: issue.status,
+      issueAssigneeAgentId: issue.assigneeAgentId,
+      currentAgentId: agent.id,
+      workspace,
+      worktreeDirty: worktreeStatus.dirty,
+      autoResumeAttempt,
+    };
+
+    if (shouldAutoResumeDirtyCodeTask(guardInput)) {
+      logger.warn(
+        {
+          runId: run.id,
+          issueId,
+          identifier: issue.identifier,
+          worktreePath: workspace.worktreePath,
+          dirtyEntries: worktreeStatus.entries.slice(0, 20),
+          autoResumeAttempt: autoResumeAttempt + 1,
+        },
+        "successful code-task run left a dirty git worktree; scheduling automatic continuation",
+      );
+      await enqueueWakeup(agent.id, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "dirty_worktree_auto_resume",
+        payload: { issueId },
+        contextSnapshot: {
+          ...parseObject(run.contextSnapshot),
+          issueId,
+          taskId: issueId,
+          taskKey: taskKey ?? issueId,
+          autoResumeDirtyWorktreeAttempt: autoResumeAttempt + 1,
+          autoResumeDirtyWorktreeFromRunId: run.id,
+          autoResumeDirtyWorktreeReason: "successful_run_left_dirty_worktree",
+        },
+      });
+      return;
+    }
+
+    if (!shouldEscalateDirtyCodeTaskStall(guardInput)) return;
+
+    const preview = worktreeStatus.entries.slice(0, 12).map((line) => `- \`${line}\``).join("\n");
+    await issuesSvc.addComment(
+      issue.id,
+      [
+        "## System Guard",
+        "",
+        "The last successful execution run still left the task git worktree dirty after the automatic continuation retry.",
+        "Manual triage is required before this issue can continue to QA.",
+        "",
+        `- Run: \`${run.id}\``,
+        `- Worktree: \`${workspace.worktreePath}\``,
+        preview ? "- Dirty entries (sample):" : null,
+        preview || null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      {},
+    );
   }
 
   async function resolveWorkspaceForRun(
@@ -1129,6 +1293,7 @@ export function heartbeatService(db: Db) {
     const issueAssigneeConfig = issueId
       ? await db
           .select({
+            status: issues.status,
             projectId: issues.projectId,
             assigneeAgentId: issues.assigneeAgentId,
             assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
@@ -1159,18 +1324,33 @@ export function heartbeatService(db: Db) {
     const taskSession = taskKey
       ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey)
       : null;
-    const resetTaskSession = shouldResetTaskSessionForWake(context);
-    const sessionResetReason = describeSessionResetReason(context);
-    const taskSessionForRun = resetTaskSession ? null : taskSession;
-    const previousSessionParams = normalizeSessionParams(
-      sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null),
-    );
     const config = parseObject(agent.adapterConfig);
     const executionWorkspaceMode = resolveExecutionWorkspaceMode({
       projectPolicy: projectExecutionWorkspacePolicy,
       issueSettings: issueExecutionWorkspaceSettings,
       legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
     });
+    const wakeReason = readNonEmptyString(context.wakeReason);
+    const resetTaskSession =
+      shouldResetTaskSessionForWake(context) ||
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason,
+        issueStatus: readNonEmptyString(issueAssigneeConfig?.status),
+        executionWorkspaceMode,
+        hasTaskSession: Boolean(taskSession),
+      });
+    const sessionResetReason =
+      describeSessionResetReason(context) ??
+      describeTodoCodeCommentResetReason({
+        wakeReason,
+        issueStatus: readNonEmptyString(issueAssigneeConfig?.status),
+        executionWorkspaceMode,
+        hasTaskSession: Boolean(taskSession),
+      });
+    const taskSessionForRun = resetTaskSession ? null : taskSession;
+    const previousSessionParams = normalizeSessionParams(
+      sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null),
+    );
     const resolvedWorkspace = await resolveWorkspaceForRun(
       agent,
       context,
@@ -1628,6 +1808,15 @@ export function heartbeatService(db: Db) {
               lastError: outcome === "succeeded" ? null : (adapterResult.errorMessage ?? "run_failed"),
             });
           }
+        }
+        if (outcome === "succeeded") {
+          await handleIncompleteDirtyCodeTaskRun({
+            run: finalizedRun,
+            agent,
+            issueId,
+            taskKey,
+            workspace: executionWorkspace,
+          });
         }
       }
       await finalizeAgentStatus(agent.id, outcome);

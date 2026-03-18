@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
   resolveRuntimeSessionParamsForWorkspace,
+  shouldAutoResumeDirtyCodeTask,
+  shouldEscalateDirtyCodeTaskStall,
   shouldResetTaskSessionForWake,
+  shouldResetTaskSessionForTodoCodeCommentWake,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
+import type { RealizedExecutionWorkspace } from "../services/workspace-runtime.ts";
 
 function buildResolvedWorkspace(overrides: Partial<ResolvedWorkspaceForRun> = {}): ResolvedWorkspaceForRun {
   return {
@@ -16,6 +20,25 @@ function buildResolvedWorkspace(overrides: Partial<ResolvedWorkspaceForRun> = {}
     repoRef: null,
     workspaceHints: [],
     warnings: [],
+    ...overrides,
+  };
+}
+
+function buildRealizedWorkspace(
+  overrides: Partial<RealizedExecutionWorkspace> = {},
+): RealizedExecutionWorkspace {
+  return {
+    cwd: "/tmp/project/.paperclip/worktrees/codex/BAL-314",
+    source: "project_primary",
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    repoUrl: "git@gitlab.com:balibikehouse/bikehouse-front-v2.git",
+    repoRef: "origin/main",
+    strategy: "git_worktree",
+    branchName: "codex/BAL-314",
+    worktreePath: "/tmp/project/.paperclip/worktrees/codex/BAL-314",
+    warnings: [],
+    created: false,
     ...overrides,
   };
 }
@@ -139,5 +162,116 @@ describe("shouldResetTaskSessionForWake", () => {
         wakeTriggerDetail: "callback",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
+  it("resets stale code-task sessions for todo comment wakes in project-linked workspaces", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "todo",
+        executionWorkspaceMode: "isolated",
+        hasTaskSession: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("resets stale code-task sessions for reopen comment wakes in project-linked workspaces", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_reopened_via_comment",
+        issueStatus: "todo",
+        executionWorkspaceMode: "project_primary",
+        hasTaskSession: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not reset in-progress code sessions on ordinary comments", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "in_progress",
+        executionWorkspaceMode: "isolated",
+        hasTaskSession: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not reset agent-default tasks just because they were commented", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "todo",
+        executionWorkspaceMode: "agent_default",
+        hasTaskSession: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not reset when no saved task session exists", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "todo",
+        executionWorkspaceMode: "isolated",
+        hasTaskSession: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("dirty git worktree completion guard", () => {
+  it("auto-resumes a successful git worktree issue that is still dirty", () => {
+    expect(
+      shouldAutoResumeDirtyCodeTask({
+        issueStatus: "in_progress",
+        issueAssigneeAgentId: "agent-1",
+        currentAgentId: "agent-1",
+        workspace: buildRealizedWorkspace(),
+        worktreeDirty: true,
+        autoResumeAttempt: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not auto-resume once the retry limit is exhausted", () => {
+    expect(
+      shouldAutoResumeDirtyCodeTask({
+        issueStatus: "in_progress",
+        issueAssigneeAgentId: "agent-1",
+        currentAgentId: "agent-1",
+        workspace: buildRealizedWorkspace(),
+        worktreeDirty: true,
+        autoResumeAttempt: 1,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not auto-resume clean worktrees", () => {
+    expect(
+      shouldAutoResumeDirtyCodeTask({
+        issueStatus: "in_progress",
+        issueAssigneeAgentId: "agent-1",
+        currentAgentId: "agent-1",
+        workspace: buildRealizedWorkspace(),
+        worktreeDirty: false,
+        autoResumeAttempt: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("escalates only after a dirty task stalls again after the retry", () => {
+    expect(
+      shouldEscalateDirtyCodeTaskStall({
+        issueStatus: "in_progress",
+        issueAssigneeAgentId: "agent-1",
+        currentAgentId: "agent-1",
+        workspace: buildRealizedWorkspace(),
+        worktreeDirty: true,
+        autoResumeAttempt: 1,
+      }),
+    ).toBe(true);
   });
 });

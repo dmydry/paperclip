@@ -19,6 +19,11 @@ async function runGit(cwd: string, args: string[]) {
   await execFileAsync("git", args, { cwd });
 }
 
+async function runGitStdout(cwd: string, args: string[]) {
+  const { stdout } = await execFileAsync("git", args, { cwd });
+  return stdout.trim();
+}
+
 async function createTempRepo() {
   const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-repo-"));
   await runGit(repoRoot, ["init"]);
@@ -29,6 +34,28 @@ async function createTempRepo() {
   await runGit(repoRoot, ["commit", "-m", "Initial commit"]);
   await runGit(repoRoot, ["checkout", "-B", "main"]);
   return repoRoot;
+}
+
+async function createTrackedTempRepo() {
+  const remoteRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-remote-"));
+  await runGit(remoteRoot, ["init", "--bare", "--initial-branch=main"]);
+
+  const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-source-"));
+  await runGit(sourceRoot, ["init", "--initial-branch=main"]);
+  await runGit(sourceRoot, ["config", "user.email", "paperclip@example.com"]);
+  await runGit(sourceRoot, ["config", "user.name", "Paperclip Test"]);
+  await fs.writeFile(path.join(sourceRoot, "README.md"), "hello\n", "utf8");
+  await runGit(sourceRoot, ["add", "README.md"]);
+  await runGit(sourceRoot, ["commit", "-m", "Initial commit"]);
+  await runGit(sourceRoot, ["remote", "add", "origin", remoteRoot]);
+  await runGit(sourceRoot, ["push", "-u", "origin", "main"]);
+
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-clone-"));
+  await execFileAsync("git", ["clone", remoteRoot, repoRoot]);
+  await runGit(repoRoot, ["config", "user.email", "paperclip@example.com"]);
+  await runGit(repoRoot, ["config", "user.name", "Paperclip Test"]);
+
+  return { remoteRoot, sourceRoot, repoRoot };
 }
 
 function buildWorkspace(cwd: string): RealizedExecutionWorkspace {
@@ -211,6 +238,122 @@ describe("realizeExecutionWorkspace", () => {
 
     await expect(fs.readFile(path.join(reused.cwd, ".paperclip-provision-created"), "utf8")).resolves.toBe("false\n");
   });
+
+  it("fetches a remote tracking base ref before creating a new worktree", async () => {
+    const { sourceRoot, repoRoot } = await createTrackedTempRepo();
+    const staleOriginMain = await runGitStdout(repoRoot, ["rev-parse", "origin/main"]);
+
+    await fs.writeFile(path.join(sourceRoot, "README.md"), "hello\nremote update\n", "utf8");
+    await runGit(sourceRoot, ["add", "README.md"]);
+    await runGit(sourceRoot, ["commit", "-m", "Remote update"]);
+    await runGit(sourceRoot, ["push", "origin", "main"]);
+
+    const freshRemoteMain = await runGitStdout(sourceRoot, ["rev-parse", "HEAD"]);
+    expect(freshRemoteMain).not.toBe(staleOriginMain);
+    expect(await runGitStdout(repoRoot, ["rev-parse", "origin/main"])).toBe(staleOriginMain);
+
+    const workspace = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "origin/main",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-449",
+        title: "Fetch remote main before branch",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(workspace.created).toBe(true);
+    expect(await runGitStdout(repoRoot, ["rev-parse", "origin/main"])).toBe(freshRemoteMain);
+    expect(await runGitStdout(workspace.cwd, ["rev-parse", "HEAD"])).toBe(freshRemoteMain);
+  }, 20_000);
+
+  it("does not refetch the base ref when reusing an existing worktree", async () => {
+    const { sourceRoot, repoRoot } = await createTrackedTempRepo();
+
+    const first = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "origin/main",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-450",
+        title: "Reuse existing worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    const firstHead = await runGitStdout(first.cwd, ["rev-parse", "HEAD"]);
+    await fs.writeFile(path.join(sourceRoot, "README.md"), "hello\nremote update after first worktree\n", "utf8");
+    await runGit(sourceRoot, ["add", "README.md"]);
+    await runGit(sourceRoot, ["commit", "-m", "Remote update after worktree"]);
+    await runGit(sourceRoot, ["push", "origin", "main"]);
+
+    const second = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "origin/main",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-450",
+        title: "Reuse existing worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.cwd).toBe(first.cwd);
+    expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).toBe(firstHead);
+  }, 20_000);
 });
 
 describe("ensureRuntimeServicesForRun", () => {
@@ -311,7 +454,7 @@ describe("ensureRuntimeServicesForRun", () => {
     expect(third).toHaveLength(1);
     expect(third[0]?.reused).toBe(false);
     expect(third[0]?.id).not.toBe(first[0]?.id);
-  });
+  }, 20_000);
 });
 
 describe("normalizeAdapterManagedRuntimeServices", () => {
