@@ -228,6 +228,17 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
     ).toBe(true);
   });
 
+  it("resets stale code-task sessions for mention wakes in project-linked workspaces", () => {
+    expect(
+      shouldResetTaskSessionForTodoCodeCommentWake({
+        wakeReason: "issue_comment_mentioned",
+        issueStatus: "todo",
+        executionWorkspaceMode: "isolated",
+        hasTaskSession: true,
+      }),
+    ).toBe(true);
+  });
+
   it("does not reset in-progress code sessions on ordinary comments", () => {
     expect(
       shouldResetTaskSessionForTodoCodeCommentWake({

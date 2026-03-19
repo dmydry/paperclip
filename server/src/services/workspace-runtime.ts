@@ -27,6 +27,8 @@ export interface ExecutionWorkspaceIssueRef {
   title: string | null;
 }
 
+type WorktreeReuseSyncStrategy = "rebase" | "reset_hard";
+
 export interface ExecutionWorkspaceAgentRef {
   id: string;
   name: string;
@@ -308,6 +310,58 @@ async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string) {
   const remoteBranchRef = `refs/heads/${parsed.branch}`;
   const localTrackingRef = `refs/remotes/${parsed.remote}/${parsed.branch}`;
   await runGit(["fetch", "--prune", parsed.remote, `+${remoteBranchRef}:${localTrackingRef}`], repoRoot);
+}
+
+async function syncExistingWorktreeToBaseRef(input: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+  baseRef: string;
+  reuseSyncStrategy: WorktreeReuseSyncStrategy;
+  recorder?: WorkspaceOperationRecorder | null;
+}) {
+  const normalizedBaseRef = input.baseRef.trim();
+  if (!normalizedBaseRef) return;
+  if (normalizedBaseRef === input.branchName.trim()) return;
+
+  await refreshRemoteTrackingBaseRef(input.repoRoot, normalizedBaseRef);
+
+  if (input.reuseSyncStrategy === "rebase") {
+    await recordGitOperation(input.recorder, {
+      phase: "worktree_prepare",
+      args: ["rebase", "--autostash", normalizedBaseRef],
+      cwd: input.worktreePath,
+      metadata: {
+        repoRoot: input.repoRoot,
+        worktreePath: input.worktreePath,
+        branchName: input.branchName,
+        baseRef: normalizedBaseRef,
+        created: false,
+        reused: true,
+        reuseSyncStrategy: "rebase",
+      },
+      successMessage: `Rebased ${input.branchName} onto ${normalizedBaseRef}\n`,
+      failureLabel: `git rebase ${normalizedBaseRef}`,
+    });
+    return;
+  }
+
+  await recordGitOperation(input.recorder, {
+    phase: "worktree_prepare",
+    args: ["reset", "--hard", normalizedBaseRef],
+    cwd: input.worktreePath,
+    metadata: {
+      repoRoot: input.repoRoot,
+      worktreePath: input.worktreePath,
+      branchName: input.branchName,
+      baseRef: normalizedBaseRef,
+      created: false,
+      reused: true,
+      reuseSyncStrategy: "reset_hard",
+    },
+    successMessage: `Reset ${input.branchName} to ${normalizedBaseRef}\n`,
+    failureLabel: `git reset --hard ${normalizedBaseRef}`,
+  });
 }
 
 function terminateChildProcess(child: ChildProcess) {
@@ -611,6 +665,9 @@ export async function realizeExecutionWorkspace(input: {
     : path.join(repoRoot, ".paperclip", "worktrees");
   const worktreePath = path.join(worktreeParentDir, branchName);
   const baseRef = asString(rawStrategy.baseRef, input.base.repoRef ?? "HEAD");
+  const reuseSyncStrategy = rawStrategy.reuseSyncStrategy === "rebase" || rawStrategy.reuseSyncStrategy === "reset_hard"
+    ? (rawStrategy.reuseSyncStrategy as WorktreeReuseSyncStrategy)
+    : null;
 
   await fs.mkdir(worktreeParentDir, { recursive: true });
 
@@ -635,6 +692,16 @@ export async function realizeExecutionWorkspace(input: {
             exitCode: 0,
             system: `Reused existing git worktree at ${worktreePath}\n`,
           }),
+        });
+      }
+      if (reuseSyncStrategy) {
+        await syncExistingWorktreeToBaseRef({
+          repoRoot,
+          worktreePath,
+          branchName,
+          baseRef,
+          reuseSyncStrategy,
+          recorder: input.recorder ?? null,
         });
       }
       await provisionExecutionWorktree({

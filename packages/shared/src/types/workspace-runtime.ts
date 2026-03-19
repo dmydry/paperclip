@@ -34,6 +34,7 @@ export type ExecutionWorkspaceStatus =
 export interface ExecutionWorkspaceStrategy {
   type: ExecutionWorkspaceStrategyType;
   baseRef?: string | null;
+  reuseSyncStrategy?: "rebase" | "reset_hard" | null;
   branchTemplate?: string | null;
   worktreeParentDir?: string | null;
   provisionCommand?: string | null;

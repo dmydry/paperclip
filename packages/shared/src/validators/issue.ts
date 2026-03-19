@@ -5,6 +5,7 @@ const executionWorkspaceStrategySchema = z
   .object({
     type: z.enum(["project_primary", "git_worktree", "adapter_managed", "cloud_sandbox"]).optional(),
     baseRef: z.string().optional().nullable(),
+    reuseSyncStrategy: z.enum(["rebase", "reset_hard"]).optional().nullable(),
     branchTemplate: z.string().optional().nullable(),
     worktreeParentDir: z.string().optional().nullable(),
     provisionCommand: z.string().optional().nullable(),

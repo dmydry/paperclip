@@ -619,6 +619,81 @@ describe("realizeExecutionWorkspace", () => {
     expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).toBe(firstHead);
   }, 20_000);
 
+  it("rebases a reused worktree onto baseRef when reuseSyncStrategy is rebase", async () => {
+    const { sourceRoot, repoRoot } = await createTrackedTempRepo();
+
+    const first = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "origin/main",
+          reuseSyncStrategy: "rebase",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-451",
+        title: "Reuse existing worktree with sync",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    const firstHead = await runGitStdout(first.cwd, ["rev-parse", "HEAD"]);
+    await fs.writeFile(path.join(sourceRoot, "README.md"), "hello\nremote update after rebase sync\n", "utf8");
+    await runGit(sourceRoot, ["add", "README.md"]);
+    await runGit(sourceRoot, ["commit", "-m", "Remote update after reuse sync"]);
+    await runGit(sourceRoot, ["push", "origin", "main"]);
+
+    const second = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "origin/main",
+          reuseSyncStrategy: "rebase",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-451",
+        title: "Reuse existing worktree with sync",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.cwd).toBe(first.cwd);
+    expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).not.toBe(firstHead);
+    expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).toBe(
+      await runGitStdout(repoRoot, ["rev-parse", "origin/main"]),
+    );
+  }, 20_000);
+
   it("records teardown and cleanup operations when a recorder is provided", async () => {
     const repoRoot = await createTempRepo();
     const { recorder, operations } = createWorkspaceOperationRecorderDouble();

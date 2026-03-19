@@ -23,6 +23,9 @@ function parseExecutionWorkspaceStrategy(raw: unknown): ExecutionWorkspaceStrate
   return {
     type,
     ...(typeof parsed.baseRef === "string" ? { baseRef: parsed.baseRef } : {}),
+    ...(parsed.reuseSyncStrategy === "rebase" || parsed.reuseSyncStrategy === "reset_hard"
+      ? { reuseSyncStrategy: parsed.reuseSyncStrategy }
+      : {}),
     ...(typeof parsed.branchTemplate === "string" ? { branchTemplate: parsed.branchTemplate } : {}),
     ...(typeof parsed.worktreeParentDir === "string" ? { worktreeParentDir: parsed.worktreeParentDir } : {}),
     ...(typeof parsed.provisionCommand === "string" ? { provisionCommand: parsed.provisionCommand } : {}),

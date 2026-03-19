@@ -511,7 +511,11 @@ export function shouldResetTaskSessionForTodoCodeCommentWake(input: {
   if (!hasTaskSession) return false;
   if (executionWorkspaceMode === "agent_default") return false;
   if (issueStatus !== "todo") return false;
-  return wakeReason === "issue_commented" || wakeReason === "issue_reopened_via_comment";
+  return (
+    wakeReason === "issue_commented" ||
+    wakeReason === "issue_reopened_via_comment" ||
+    wakeReason === "issue_comment_mentioned"
+  );
 }
 
 function describeSessionResetReason(
@@ -532,6 +536,18 @@ function describeTodoCodeCommentResetReason(input: {
 }) {
   if (!shouldResetTaskSessionForTodoCodeCommentWake(input)) return null;
   return `issue is ${input.issueStatus} and woke via ${input.wakeReason} in a project-linked code workspace`;
+}
+
+function isQaRetestChildIssue(input: {
+  title: string | null | undefined;
+  parentId: string | null | undefined;
+  executionWorkspaceMode: ExecutionWorkspaceModeForWake;
+}) {
+  if (input.executionWorkspaceMode !== "isolated_workspace") return false;
+  if (!readNonEmptyString(input.parentId)) return false;
+  const title = readNonEmptyString(input.title);
+  if (!title) return false;
+  return /^qa:/i.test(title);
 }
 
 function deriveCommentId(
@@ -1816,6 +1832,7 @@ export function heartbeatService(db: Db) {
             identifier: issues.identifier,
             title: issues.title,
             status: issues.status,
+            parentId: issues.parentId,
             projectId: issues.projectId,
             projectWorkspaceId: issues.projectWorkspaceId,
             executionWorkspaceId: issues.executionWorkspaceId,
@@ -1901,6 +1918,39 @@ export function heartbeatService(db: Db) {
       agent.companyId,
       mergedConfig,
     );
+    let runtimeConfig = resolvedConfig;
+    if (isQaRetestChildIssue({
+      title: issueContext?.title,
+      parentId: issueContext?.parentId,
+      executionWorkspaceMode,
+    })) {
+      const parentExecutionWorkspaceId = issueContext?.parentId
+        ? await db
+            .select({ executionWorkspaceId: issues.executionWorkspaceId })
+            .from(issues)
+            .where(and(eq(issues.id, issueContext.parentId), eq(issues.companyId, agent.companyId)))
+            .then((rows) => rows[0]?.executionWorkspaceId ?? null)
+        : null;
+      const parentExecutionWorkspace = parentExecutionWorkspaceId
+        ? await executionWorkspacesSvc.getById(parentExecutionWorkspaceId)
+        : null;
+      const parentBranchName =
+        typeof parentExecutionWorkspace?.branchName === "string" && parentExecutionWorkspace.branchName.trim().length > 0
+          ? parentExecutionWorkspace.branchName.trim()
+          : null;
+      if (parentBranchName) {
+        const currentStrategy = parseObject(runtimeConfig.workspaceStrategy);
+        runtimeConfig = {
+          ...runtimeConfig,
+          workspaceStrategy: {
+            ...currentStrategy,
+            type: typeof currentStrategy.type === "string" ? currentStrategy.type : "git_worktree",
+            baseRef: parentBranchName,
+            reuseSyncStrategy: "rebase",
+          },
+        };
+      }
+    }
     const issueRef = issueContext
       ? {
           id: issueContext.id,
@@ -1928,7 +1978,7 @@ export function heartbeatService(db: Db) {
         repoUrl: resolvedWorkspace.repoUrl,
         repoRef: resolvedWorkspace.repoRef,
       },
-      config: resolvedConfig,
+      config: runtimeConfig,
       issue: issueRef,
       agent: {
         id: agent.id,
