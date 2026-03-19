@@ -694,6 +694,81 @@ describe("realizeExecutionWorkspace", () => {
     );
   }, 20_000);
 
+  it("rebases a reused worktree onto a local slash-named baseRef without treating it as a remote", async () => {
+    const repoRoot = await createTempRepo();
+    await runGit(repoRoot, ["checkout", "-B", "codex/PAP-388-parent"]);
+
+    const first = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "codex/PAP-388-parent",
+          reuseSyncStrategy: "rebase",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-452",
+        title: "Reuse existing worktree with local slash branch sync",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    const firstHead = await runGitStdout(first.cwd, ["rev-parse", "HEAD"]);
+
+    await fs.writeFile(path.join(repoRoot, "README.md"), "hello\nlocal slash branch update\n", "utf8");
+    await runGit(repoRoot, ["add", "README.md"]);
+    await runGit(repoRoot, ["commit", "-m", "Local slash branch update"]);
+    const parentHead = await runGitStdout(repoRoot, ["rev-parse", "HEAD"]);
+
+    const second = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "main",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: "codex/PAP-388-parent",
+          reuseSyncStrategy: "rebase",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-452",
+        title: "Reuse existing worktree with local slash branch sync",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.cwd).toBe(first.cwd);
+    expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).not.toBe(firstHead);
+    expect(await runGitStdout(second.cwd, ["rev-parse", "HEAD"])).toBe(parentHead);
+  }, 20_000);
+
   it("records teardown and cleanup operations when a recorder is provided", async () => {
     const repoRoot = await createTempRepo();
     const { recorder, operations } = createWorkspaceOperationRecorderDouble();

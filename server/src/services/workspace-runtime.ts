@@ -304,9 +304,19 @@ function parseRemoteTrackingRef(value: string): { remote: string; branch: string
   return { remote, branch };
 }
 
+async function hasGitRemote(repoRoot: string, remoteName: string) {
+  const stdout = await runGit(["remote"], repoRoot);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .includes(remoteName);
+}
+
 async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string) {
   const parsed = parseRemoteTrackingRef(baseRef);
   if (!parsed) return;
+  if (!(await hasGitRemote(repoRoot, parsed.remote))) return;
   const remoteBranchRef = `refs/heads/${parsed.branch}`;
   const localTrackingRef = `refs/remotes/${parsed.remote}/${parsed.branch}`;
   await runGit(["fetch", "--prune", parsed.remote, `+${remoteBranchRef}:${localTrackingRef}`], repoRoot);
