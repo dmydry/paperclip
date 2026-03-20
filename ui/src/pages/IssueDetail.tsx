@@ -338,9 +338,26 @@ export function IssueDetail() {
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
+    const activeUsers = (members ?? [])
+      .filter((member) => member.principalType === "user" && member.status === "active")
+      .map((member) => {
+        const label =
+          member.userName?.trim() ||
+          member.userEmail?.trim() ||
+          member.principalId.slice(0, 8);
+        return {
+          id: `user:${member.principalId}`,
+          name: label,
+          kind: "user" as const,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
     const activeAgents = [...(agents ?? [])]
       .filter((agent) => agent.status !== "terminated")
       .sort((a, b) => a.name.localeCompare(b.name));
+    for (const user of activeUsers) {
+      options.push(user);
+    }
     for (const agent of activeAgents) {
       options.push({
         id: `agent:${agent.id}`,
@@ -357,8 +374,8 @@ export function IssueDetail() {
         projectColor: project.color,
       });
     }
-    return options;
-  }, [agents, orderedProjects]);
+    return options.filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
+  }, [agents, members, orderedProjects]);
 
   const childIssues = useMemo(() => {
     if (!allIssues || !issue) return [];

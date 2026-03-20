@@ -2,7 +2,7 @@ import { buildProjectMentionHref } from "@paperclipai/shared";
 
 export interface MentionLike {
   name: string;
-  kind?: "agent" | "project";
+  kind?: "agent" | "user" | "project";
   projectId?: string;
   projectColor?: string | null;
 }

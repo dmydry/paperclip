@@ -36,7 +36,7 @@ import { applyMention } from "./markdown-mentions";
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project";
+  kind?: "agent" | "user" | "project";
   projectId?: string;
   projectColor?: string | null;
 }
