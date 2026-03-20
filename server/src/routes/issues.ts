@@ -32,6 +32,10 @@ import {
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import {
+  shouldAutoReturnIssueToTodoFromComment,
+  shouldWakeAssigneeOnCommentBackToTodo,
+} from "./issues-comment-reopen.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 
@@ -915,6 +919,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       existing.status === "backlog" &&
       issue.status !== "backlog" &&
       req.body.status !== undefined;
+    const returnedToTodoViaComment = shouldWakeAssigneeOnCommentBackToTodo({
+      previousStatus: existing.status,
+      nextStatus: issue.status,
+      commentBody,
+      assigneeAgentId: issue.assigneeAgentId,
+    });
 
     // Merge all wakeups from this update into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -941,6 +951,30 @@ export function issueRoutes(db: Db, storage: StorageService) {
           requestedByActorType: actor.actorType,
           requestedByActorId: actor.actorId,
           contextSnapshot: { issueId: issue.id, source: "issue.status_change" },
+        });
+      }
+
+      if (!assigneeChanged && returnedToTodoViaComment && issue.assigneeAgentId) {
+        wakeups.set(issue.assigneeAgentId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "issue_reopened_via_comment",
+          payload: {
+            issueId: issue.id,
+            commentId: comment?.id ?? null,
+            reopenedFrom: existing.status,
+            mutation: "update",
+          },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: issue.id,
+            taskId: issue.id,
+            commentId: comment?.id ?? null,
+            source: "issue.update.reopen",
+            wakeReason: "issue_reopened_via_comment",
+            reopenedFrom: existing.status,
+          },
         });
       }
 
@@ -1197,8 +1231,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
     let currentIssue = issue;
+    const autoReturnToTodo = shouldAutoReturnIssueToTodoFromComment({
+      issueStatus: issue.status,
+      issueAssigneeAgentId: issue.assigneeAgentId,
+      actorType: actor.actorType,
+      actorAgentId: actor.agentId,
+      body: req.body.body,
+    });
+    const shouldReturnToTodo = (reopenRequested && isClosed) || autoReturnToTodo;
 
-    if (reopenRequested && isClosed) {
+    if (shouldReturnToTodo) {
       const reopenedIssue = await svc.update(id, { status: "todo" });
       if (!reopenedIssue) {
         res.status(404).json({ error: "Issue not found" });
@@ -1221,7 +1263,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
           status: "todo",
           reopened: true,
           reopenedFrom: reopenFromStatus,
-          source: "comment",
+          source: autoReturnToTodo ? "qa_fail_comment" : "comment",
           identifier: currentIssue.identifier,
         },
       });
