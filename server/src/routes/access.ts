@@ -2637,7 +2637,10 @@ export function accessRoutes(
 
   router.get("/companies/:companyId/members", async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type !== "board") {
+      throw forbidden("Board access required");
+    }
     const members = await access.listMembers(companyId);
     res.json(members);
   });
