@@ -56,9 +56,9 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
   if (type === "turn_end") {
     const message = asRecord(parsed.message);
     const toolResults = parsed.toolResults as Array<Record<string, unknown>> | undefined;
-    
+
     const entries: TranscriptEntry[] = [];
-    
+
     if (message) {
       const content = message.content as string | Array<{ type: string; text?: string }>;
       const text = extractTextContent(content);
@@ -72,17 +72,28 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
       for (const tr of toolResults) {
         const content = tr.content;
         const isError = tr.isError === true;
-        const contentStr = typeof content === "string" ? content : JSON.stringify(content);
+
+        // Extract text from Pi's content array format
+        let contentStr: string;
+        if (typeof content === "string") {
+          contentStr = content;
+        } else if (Array.isArray(content)) {
+          contentStr = extractTextContent(content as Array<{ type: string; text?: string }>);
+        } else {
+          contentStr = JSON.stringify(content);
+        }
+
         entries.push({
           kind: "tool_result",
           ts,
           toolUseId: asString(tr.toolCallId, "unknown"),
+          toolName: asString(tr.toolName),
           content: contentStr,
           isError,
         });
       }
     }
-    
+
     return entries.length > 0 ? entries : [{ kind: "system", ts, text: "Turn ended" }];
   }
 
@@ -130,14 +141,35 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
 
   if (type === "tool_execution_end") {
     const toolCallId = asString(parsed.toolCallId);
+    const toolName = asString(parsed.toolName);
     const result = parsed.result;
     const isError = parsed.isError === true;
-    const contentStr = typeof result === "string" ? result : JSON.stringify(result);
+
+    // Extract text from Pi's content array format
+    // Can be: {"content": [{"type": "text", "text": "..."}]} or [{"type": "text", "text": "..."}]
+    let contentStr: string;
+    if (typeof result === "string") {
+      contentStr = result;
+    } else if (Array.isArray(result)) {
+      // Direct array format: result is [{"type": "text", "text": "..."}]
+      contentStr = extractTextContent(result as Array<{ type: string; text?: string }>);
+    } else if (result && typeof result === "object") {
+      const resultObj = result as Record<string, unknown>;
+      if (Array.isArray(resultObj.content)) {
+        // Wrapped format: result is {"content": [{"type": "text", "text": "..."}]}
+        contentStr = extractTextContent(resultObj.content as Array<{ type: string; text?: string }>);
+      } else {
+        contentStr = JSON.stringify(result);
+      }
+    } else {
+      contentStr = JSON.stringify(result);
+    }
     
     return [{
       kind: "tool_result",
       ts,
       toolUseId: toolCallId || "unknown",
+      toolName,
       content: contentStr,
       isError,
     }];

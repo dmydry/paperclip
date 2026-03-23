@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { agents } from "@paperclipai/db";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
+  formatRuntimeWorkspaceWarningLog,
   prioritizeProjectWorkspaceCandidatesForRun,
   parseSessionCompactionPolicy,
   requiresIsolatedWorkspaceGuard,
@@ -211,7 +212,7 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
       shouldResetTaskSessionForTodoCodeCommentWake({
         wakeReason: "issue_commented",
         issueStatus: "todo",
-        executionWorkspaceMode: "isolated",
+        executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: true,
       }),
     ).toBe(true);
@@ -222,7 +223,7 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
       shouldResetTaskSessionForTodoCodeCommentWake({
         wakeReason: "issue_reopened_via_comment",
         issueStatus: "todo",
-        executionWorkspaceMode: "project_primary",
+        executionWorkspaceMode: "shared_workspace",
         hasTaskSession: true,
       }),
     ).toBe(true);
@@ -233,7 +234,7 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
       shouldResetTaskSessionForTodoCodeCommentWake({
         wakeReason: "issue_comment_mentioned",
         issueStatus: "todo",
-        executionWorkspaceMode: "isolated",
+        executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: true,
       }),
     ).toBe(true);
@@ -244,7 +245,7 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
       shouldResetTaskSessionForTodoCodeCommentWake({
         wakeReason: "issue_commented",
         issueStatus: "in_progress",
-        executionWorkspaceMode: "isolated",
+        executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: true,
       }),
     ).toBe(false);
@@ -266,10 +267,19 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
       shouldResetTaskSessionForTodoCodeCommentWake({
         wakeReason: "issue_commented",
         issueStatus: "todo",
-        executionWorkspaceMode: "isolated",
+        executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("formatRuntimeWorkspaceWarningLog", () => {
+  it("emits informational workspace warnings on stdout", () => {
+    expect(formatRuntimeWorkspaceWarningLog("Using fallback workspace")).toEqual({
+      stream: "stdout",
+      chunk: "[paperclip] Using fallback workspace\n",
+    });
   });
 });
 
