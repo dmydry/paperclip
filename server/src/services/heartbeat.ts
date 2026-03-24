@@ -92,6 +92,19 @@ function deriveRepoNameFromRepoUrl(repoUrl: string | null): string | null {
   }
 }
 
+export function shouldPostWorkspaceReadyComment(input: {
+  issueStatus: string | null | undefined;
+  workspaceCreated: boolean;
+  runtimeServices: readonly { reused?: boolean | null }[];
+  adapterManagedRuntimeServicesCount?: number;
+}) {
+  const status = typeof input.issueStatus === "string" ? input.issueStatus.trim() : "";
+  if (!status || status === "todo" || status === "backlog" || status === "cancelled") return false;
+  if (input.workspaceCreated) return true;
+  if ((input.adapterManagedRuntimeServicesCount ?? 0) > 0) return true;
+  return input.runtimeServices.some((service) => service.reused !== true);
+}
+
 async function ensureManagedProjectWorkspace(input: {
   companyId: string;
   projectId: string;
@@ -2593,23 +2606,6 @@ export function heartbeatService(db: Db) {
           })
           .where(eq(heartbeatRuns.id, run.id));
       }
-      if (issueId && (executionWorkspace.created || runtimeServices.some((service) => !service.reused))) {
-        try {
-          await issuesSvc.addComment(
-            issueId,
-            buildWorkspaceReadyComment({
-              workspace: executionWorkspace,
-              runtimeServices,
-            }),
-            { agentId: agent.id },
-          );
-        } catch (err) {
-          await onLog(
-            "stderr",
-            `[paperclip] Failed to post workspace-ready comment: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
-        }
-      }
       const onAdapterMeta = async (meta: AdapterInvocationMeta) => {
         if (meta.env && secretKeys.size > 0) {
           for (const key of secretKeys) {
@@ -2668,11 +2664,11 @@ export function heartbeatService(db: Db) {
             reports: adapterResult.runtimeServices,
           })
         : [];
+      const combinedRuntimeServices =
+        adapterManagedRuntimeServices.length > 0
+          ? [...runtimeServices, ...adapterManagedRuntimeServices]
+          : runtimeServices;
       if (adapterManagedRuntimeServices.length > 0) {
-        const combinedRuntimeServices = [
-          ...runtimeServices,
-          ...adapterManagedRuntimeServices,
-        ];
         context.paperclipRuntimeServices = combinedRuntimeServices;
         context.paperclipRuntimePrimaryUrl =
           combinedRuntimeServices.find((service) => readNonEmptyString(service.url))?.url ?? null;
@@ -2683,22 +2679,37 @@ export function heartbeatService(db: Db) {
             updatedAt: new Date(),
           })
           .where(eq(heartbeatRuns.id, run.id));
-        if (issueId) {
-          try {
-            await issuesSvc.addComment(
-              issueId,
-              buildWorkspaceReadyComment({
-                workspace: executionWorkspace,
-                runtimeServices: adapterManagedRuntimeServices,
-              }),
-              { agentId: agent.id },
-            );
-          } catch (err) {
-            await onLog(
-              "stderr",
-              `[paperclip] Failed to post adapter-managed runtime comment: ${err instanceof Error ? err.message : String(err)}\n`,
-            );
-          }
+      }
+      const issueStatusForWorkspaceComment = issueId
+        ? await db
+            .select({ status: issues.status })
+            .from(issues)
+            .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+            .then((rows) => rows[0]?.status ?? null)
+        : null;
+      if (
+        issueId &&
+        shouldPostWorkspaceReadyComment({
+          issueStatus: issueStatusForWorkspaceComment,
+          workspaceCreated: executionWorkspace.created,
+          runtimeServices,
+          adapterManagedRuntimeServicesCount: adapterManagedRuntimeServices.length,
+        })
+      ) {
+        try {
+          await issuesSvc.addComment(
+            issueId,
+            buildWorkspaceReadyComment({
+              workspace: executionWorkspace,
+              runtimeServices: combinedRuntimeServices,
+            }),
+            { agentId: agent.id },
+          );
+        } catch (err) {
+          await onLog(
+            "stderr",
+            `[paperclip] Failed to post workspace-ready comment: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
         }
       }
       const nextSessionState = resolveNextSessionState({

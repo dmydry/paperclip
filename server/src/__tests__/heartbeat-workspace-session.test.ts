@@ -7,6 +7,7 @@ import {
   parseSessionCompactionPolicy,
   requiresIsolatedWorkspaceGuard,
   resolveRuntimeSessionParamsForWorkspace,
+  shouldPostWorkspaceReadyComment,
   shouldAutoResumeDirtyCodeTask,
   shouldEscalateDirtyCodeTaskStall,
   shouldResetTaskSessionForWake,
@@ -269,6 +270,58 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
         issueStatus: "todo",
         executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldPostWorkspaceReadyComment", () => {
+  it("does not post on todo issues before checkout", () => {
+    expect(
+      shouldPostWorkspaceReadyComment({
+        issueStatus: "todo",
+        workspaceCreated: true,
+        runtimeServices: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("does not post on backlog issues before execution starts", () => {
+    expect(
+      shouldPostWorkspaceReadyComment({
+        issueStatus: "backlog",
+        workspaceCreated: true,
+        runtimeServices: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("posts once the issue is in progress and a workspace was created", () => {
+    expect(
+      shouldPostWorkspaceReadyComment({
+        issueStatus: "in_progress",
+        workspaceCreated: true,
+        runtimeServices: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("posts for in-progress issues when a new runtime service was started", () => {
+    expect(
+      shouldPostWorkspaceReadyComment({
+        issueStatus: "in_progress",
+        workspaceCreated: false,
+        runtimeServices: [{ reused: false }],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not post when nothing new was materialized", () => {
+    expect(
+      shouldPostWorkspaceReadyComment({
+        issueStatus: "in_progress",
+        workspaceCreated: false,
+        runtimeServices: [{ reused: true }],
       }),
     ).toBe(false);
   });
