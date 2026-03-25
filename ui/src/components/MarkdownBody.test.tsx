@@ -28,4 +28,14 @@ describe("MarkdownBody", () => {
     expect(html).toContain('src="/resolved/images/org-chart.png"');
     expect(html).toContain('alt="Org chart"');
   });
+
+  it("renders raw angle-bracket tokens as text", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{"publish before/after screenshot evidence path under paper/artifacts/BAL-<ID>/ when ready."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("BAL-&lt;ID&gt;/");
+  });
 });
