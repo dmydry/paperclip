@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import { MarkdownBody } from "./MarkdownBody";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
 
 interface InlineEditorProps {
@@ -111,7 +110,6 @@ export function InlineEditor({
       setDraft(value);
       if (multiline) {
         setMultilineFocused(false);
-        setEditing(false);
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
@@ -147,35 +145,6 @@ export function InlineEditor({
   }, [autosaveState, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
 
   if (multiline) {
-    if (!editing) {
-      return (
-        <div
-          className={cn(
-            markdownPad,
-            "cursor-pointer rounded transition-colors hover:bg-accent/20",
-            !value && "text-muted-foreground italic",
-          )}
-          onClick={() => {
-            setEditing(true);
-            setMultilineFocused(true);
-          }}
-        >
-          {value ? (
-            <MarkdownBody
-              className={cn(
-                "paperclip-edit-in-place-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-                className,
-              )}
-            >
-              {value}
-            </MarkdownBody>
-          ) : (
-            <div className={className}>{placeholder}</div>
-          )}
-        </div>
-      );
-    }
-
     return (
       <div
         className={cn(
@@ -190,7 +159,6 @@ export function InlineEditor({
             clearTimeout(autosaveDebounceRef.current);
           }
           setMultilineFocused(false);
-          setEditing(false);
           const trimmed = draft.trim();
           if (!trimmed || trimmed === value) {
             reset();
@@ -215,13 +183,9 @@ export function InlineEditor({
             const trimmed = draft.trim();
             if (!trimmed || trimmed === value) {
               reset();
-              setMultilineFocused(false);
-              setEditing(false);
               void commit();
               return;
             }
-            setMultilineFocused(false);
-            setEditing(false);
             void runSave(() => commit());
           }}
         />
