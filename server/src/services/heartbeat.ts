@@ -537,6 +537,27 @@ export function shouldResetTaskSessionForTodoCodeCommentWake(input: {
   );
 }
 
+export function shouldResetTaskSessionForStandingCommentWake(input: {
+  wakeReason: string | null;
+  issueStatus: string | null;
+  executionWorkspaceMode: ExecutionWorkspaceModeForWake;
+  hasTaskSession: boolean;
+  issueProjectId: string | null;
+  issueGoalId: string | null;
+}) {
+  const { wakeReason, issueStatus, executionWorkspaceMode, hasTaskSession, issueProjectId, issueGoalId } = input;
+  if (!hasTaskSession) return false;
+  if (executionWorkspaceMode !== "shared_workspace") return false;
+  if (issueStatus !== "in_progress") return false;
+  if (issueProjectId) return false;
+  if (!issueGoalId) return false;
+  return (
+    wakeReason === "issue_commented" ||
+    wakeReason === "issue_reopened_via_comment" ||
+    wakeReason === "issue_comment_mentioned"
+  );
+}
+
 export function formatRuntimeWorkspaceWarningLog(warning: string) {
   return {
     stream: "stdout" as const,
@@ -562,6 +583,18 @@ function describeTodoCodeCommentResetReason(input: {
 }) {
   if (!shouldResetTaskSessionForTodoCodeCommentWake(input)) return null;
   return `issue is ${input.issueStatus} and woke via ${input.wakeReason} in a project-linked code workspace`;
+}
+
+function describeStandingCommentResetReason(input: {
+  wakeReason: string | null;
+  issueStatus: string | null;
+  executionWorkspaceMode: ExecutionWorkspaceModeForWake;
+  hasTaskSession: boolean;
+  issueProjectId: string | null;
+  issueGoalId: string | null;
+}) {
+  if (!shouldResetTaskSessionForStandingCommentWake(input)) return null;
+  return `standing issue is ${input.issueStatus} and woke via ${input.wakeReason}; forcing a fresh session for comment-driven backlog control`;
 }
 
 function isQaRetestChildIssue(input: {
@@ -2138,6 +2171,14 @@ export function heartbeatService(db: Db) {
         issueStatus: readNonEmptyString(issueContext?.status),
         executionWorkspaceMode,
         hasTaskSession: Boolean(taskSession),
+      }) ||
+      shouldResetTaskSessionForStandingCommentWake({
+        wakeReason,
+        issueStatus: readNonEmptyString(issueContext?.status),
+        executionWorkspaceMode,
+        hasTaskSession: Boolean(taskSession),
+        issueProjectId: readNonEmptyString(issueContext?.projectId),
+        issueGoalId: readNonEmptyString(issueContext?.goalId),
       });
     const sessionResetReason =
       describeSessionResetReason(context) ??
@@ -2146,6 +2187,14 @@ export function heartbeatService(db: Db) {
         issueStatus: readNonEmptyString(issueContext?.status),
         executionWorkspaceMode,
         hasTaskSession: Boolean(taskSession),
+      }) ??
+      describeStandingCommentResetReason({
+        wakeReason,
+        issueStatus: readNonEmptyString(issueContext?.status),
+        executionWorkspaceMode,
+        hasTaskSession: Boolean(taskSession),
+        issueProjectId: readNonEmptyString(issueContext?.projectId),
+        issueGoalId: readNonEmptyString(issueContext?.goalId),
       });
     const taskSessionForRun = resetTaskSession ? null : taskSession;
     const previousSessionParams = normalizeSessionParams(

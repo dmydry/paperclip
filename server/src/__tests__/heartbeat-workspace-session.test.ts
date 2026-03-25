@@ -10,6 +10,7 @@ import {
   shouldPostWorkspaceReadyComment,
   shouldAutoResumeDirtyCodeTask,
   shouldEscalateDirtyCodeTaskStall,
+  shouldResetTaskSessionForStandingCommentWake,
   shouldResetTaskSessionForWake,
   shouldResetTaskSessionForTodoCodeCommentWake,
   type ResolvedWorkspaceForRun,
@@ -270,6 +271,60 @@ describe("shouldResetTaskSessionForTodoCodeCommentWake", () => {
         issueStatus: "todo",
         executionWorkspaceMode: "isolated_workspace",
         hasTaskSession: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldResetTaskSessionForStandingCommentWake", () => {
+  it("resets in-progress standing shared-workspace sessions for ordinary comment wakes", () => {
+    expect(
+      shouldResetTaskSessionForStandingCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "in_progress",
+        executionWorkspaceMode: "shared_workspace",
+        hasTaskSession: true,
+        issueProjectId: null,
+        issueGoalId: "goal-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("resets standing mention wakes as well", () => {
+    expect(
+      shouldResetTaskSessionForStandingCommentWake({
+        wakeReason: "issue_comment_mentioned",
+        issueStatus: "in_progress",
+        executionWorkspaceMode: "shared_workspace",
+        hasTaskSession: true,
+        issueProjectId: null,
+        issueGoalId: "goal-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not reset project-linked tasks through the standing rule", () => {
+    expect(
+      shouldResetTaskSessionForStandingCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "in_progress",
+        executionWorkspaceMode: "shared_workspace",
+        hasTaskSession: true,
+        issueProjectId: "project-1",
+        issueGoalId: "goal-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not reset when no saved task session exists", () => {
+    expect(
+      shouldResetTaskSessionForStandingCommentWake({
+        wakeReason: "issue_commented",
+        issueStatus: "in_progress",
+        executionWorkspaceMode: "shared_workspace",
+        hasTaskSession: false,
+        issueProjectId: null,
+        issueGoalId: "goal-1",
       }),
     ).toBe(false);
   });
