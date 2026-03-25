@@ -2118,6 +2118,7 @@ export function heartbeatService(db: Db) {
             identifier: issues.identifier,
             title: issues.title,
             status: issues.status,
+            goalId: issues.goalId,
             parentId: issues.parentId,
             projectId: issues.projectId,
             projectWorkspaceId: issues.projectWorkspaceId,
