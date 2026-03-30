@@ -137,15 +137,7 @@ export function findMentionedAgentIdsInBody(
 function touchedByUserCondition(companyId: string, userId: string) {
   return sql<boolean>`
     (
-      ${issues.createdByUserId} = ${userId}
-      OR ${issues.assigneeUserId} = ${userId}
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueReadStates}
-        WHERE ${issueReadStates.issueId} = ${issues.id}
-          AND ${issueReadStates.companyId} = ${companyId}
-          AND ${issueReadStates.userId} = ${userId}
-      )
+      ${issues.assigneeUserId} = ${userId}
       OR EXISTS (
         SELECT 1
         FROM ${issueComments}
@@ -188,7 +180,6 @@ function myLastTouchAtExpr(companyId: string, userId: string) {
     GREATEST(
       COALESCE(${myLastCommentAt}, to_timestamp(0)),
       COALESCE(${myLastReadAt}, to_timestamp(0)),
-      COALESCE(CASE WHEN ${issues.createdByUserId} = ${userId} THEN ${issues.createdAt} ELSE NULL END, to_timestamp(0)),
       COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
     )
   `;
@@ -236,9 +227,8 @@ export function deriveIssueUserContext(
 
   const myLastCommentAt = normalizeDate(stats?.myLastCommentAt);
   const myLastReadAt = normalizeDate(stats?.myLastReadAt);
-  const createdTouchAt = issue.createdByUserId === userId ? normalizeDate(issue.createdAt) : null;
   const assignedTouchAt = issue.assigneeUserId === userId ? normalizeDate(issue.updatedAt) : null;
-  const myLastTouchAt = [myLastCommentAt, myLastReadAt, createdTouchAt, assignedTouchAt]
+  const myLastTouchAt = [myLastCommentAt, myLastReadAt, assignedTouchAt]
     .filter((value): value is Date => value instanceof Date)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const lastExternalCommentAt = normalizeDate(stats?.lastExternalCommentAt);

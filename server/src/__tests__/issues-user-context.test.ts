@@ -47,7 +47,7 @@ describe("deriveIssueUserContext", () => {
     expect(context.isUnreadForMe).toBe(false);
   });
 
-  it("uses issue creation time as fallback touch point for creator", () => {
+  it("does not treat bare issue creation as inbox touch", () => {
     const context = deriveIssueUserContext(
       makeIssue({ createdByUserId: "user-1", createdAt: new Date("2026-03-06T09:00:00.000Z") }),
       "user-1",
@@ -58,8 +58,8 @@ describe("deriveIssueUserContext", () => {
       },
     );
 
-    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T09:00:00.000Z");
-    expect(context.isUnreadForMe).toBe(true);
+    expect(context.myLastTouchAt).toBeNull();
+    expect(context.isUnreadForMe).toBe(false);
   });
 
   it("uses issue updated time as fallback touch point for assignee", () => {
@@ -90,6 +90,21 @@ describe("deriveIssueUserContext", () => {
 
     expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T11:30:00.000Z");
     expect(context.isUnreadForMe).toBe(false);
+  });
+
+  it("still treats an explicit user comment as inbox touch even when the user created the issue", () => {
+    const context = deriveIssueUserContext(
+      makeIssue({ createdByUserId: "user-1", createdAt: new Date("2026-03-06T09:00:00.000Z") }),
+      "user-1",
+      {
+        myLastCommentAt: new Date("2026-03-06T12:00:00.000Z"),
+        myLastReadAt: null,
+        lastExternalCommentAt: new Date("2026-03-06T13:00:00.000Z"),
+      },
+    );
+
+    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T12:00:00.000Z");
+    expect(context.isUnreadForMe).toBe(true);
   });
 
   it("handles SQL timestamp strings without throwing", () => {
