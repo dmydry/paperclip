@@ -134,17 +134,10 @@ export function findMentionedAgentIdsInBody(
   return [...mentioned];
 }
 
-function touchedByUserCondition(companyId: string, userId: string) {
+function touchedByUserCondition(_companyId: string, userId: string) {
   return sql<boolean>`
     (
       ${issues.assigneeUserId} = ${userId}
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueComments}
-        WHERE ${issueComments.issueId} = ${issues.id}
-          AND ${issueComments.companyId} = ${companyId}
-          AND ${issueComments.authorUserId} = ${userId}
-      )
     )
   `;
 }

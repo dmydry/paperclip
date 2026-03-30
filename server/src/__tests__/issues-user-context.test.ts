@@ -92,9 +92,12 @@ describe("deriveIssueUserContext", () => {
     expect(context.isUnreadForMe).toBe(false);
   });
 
-  it("still treats an explicit user comment as inbox touch even when the user created the issue", () => {
+  it("still treats an explicit user comment as the latest touch point for an assigned issue", () => {
     const context = deriveIssueUserContext(
-      makeIssue({ createdByUserId: "user-1", createdAt: new Date("2026-03-06T09:00:00.000Z") }),
+      makeIssue({
+        assigneeUserId: "user-1",
+        updatedAt: new Date("2026-03-06T09:00:00.000Z"),
+      }),
       "user-1",
       {
         myLastCommentAt: new Date("2026-03-06T12:00:00.000Z"),
