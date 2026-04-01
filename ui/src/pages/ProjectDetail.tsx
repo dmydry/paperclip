@@ -15,7 +15,6 @@ import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
-import { invalidateCompanyIssueQueries } from "../lib/invalidateIssueQueries";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
 import { CopyText } from "../components/CopyText";
 import { InlineEditor } from "../components/InlineEditor";
@@ -191,7 +190,8 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
       issuesApi.update(id, data),
     onSuccess: () => {
-      invalidateCompanyIssueQueries(queryClient, companyId);
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
     },
   });
 

@@ -10,7 +10,6 @@ import { useToast } from "./ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { toCompanyRelativePath } from "../lib/company-routes";
 import { useLocation } from "../lib/router";
-import { invalidateCompanyIssueQueries } from "../lib/invalidateIssueQueries";
 
 const TOAST_COOLDOWN_WINDOW_MS = 10_000;
 const TOAST_COOLDOWN_MAX = 3;
@@ -490,7 +489,10 @@ function invalidateActivityQueries(
   const entityId = readString(payload.entityId);
 
   if (entityType === "issue") {
-    invalidateCompanyIssueQueries(queryClient, companyId);
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(companyId) });
     if (entityId) {
       const details = readRecord(payload.details);
       const issueRefs = resolveIssueQueryRefs(queryClient, companyId, entityId, details);
