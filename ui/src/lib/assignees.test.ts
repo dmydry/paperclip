@@ -3,8 +3,10 @@ import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
   formatAssigneeUserLabel,
+  isAssigneeFilterSelected,
   parseAssigneeValue,
   suggestedCommentAssigneeValue,
+  toggleAssigneeFilterSelection,
 } from "./assignees";
 
 describe("assignee selection helpers", () => {
@@ -50,6 +52,33 @@ describe("assignee selection helpers", () => {
     expect(formatAssigneeUserLabel("user-1", "user-1")).toBe("Me");
     expect(formatAssigneeUserLabel("local-board", "someone-else")).toBe("Board");
     expect(formatAssigneeUserLabel("user-abcdef", "someone-else")).toBe("user-");
+  });
+
+  it("matches assignee filters against both encoded and legacy raw values", () => {
+    expect(
+      isAssigneeFilterSelected(["agent-123"], { assigneeAgentId: "agent-123" }),
+    ).toBe(true);
+    expect(
+      isAssigneeFilterSelected(["agent:agent-123"], { assigneeAgentId: "agent-123" }),
+    ).toBe(true);
+    expect(
+      isAssigneeFilterSelected(["user-123"], { assigneeUserId: "user-123" }),
+    ).toBe(true);
+    expect(
+      isAssigneeFilterSelected(["user:user-123"], { assigneeUserId: "user-123" }),
+    ).toBe(true);
+  });
+
+  it("toggles assignee filters while removing legacy aliases", () => {
+    expect(
+      toggleAssigneeFilterSelection(["agent-123"], { assigneeAgentId: "agent-123" }),
+    ).toEqual([]);
+    expect(
+      toggleAssigneeFilterSelection(["user-123"], { assigneeUserId: "user-123" }),
+    ).toEqual([]);
+    expect(
+      toggleAssigneeFilterSelection([], { assigneeUserId: "user-123" }),
+    ).toEqual(["user:user-123"]);
   });
 
   it("suggests the last non-me commenter without changing the actual assignee encoding", () => {

@@ -62,6 +62,39 @@ export function parseAssigneeValue(value: string): AssigneeSelection {
   return { assigneeAgentId: value, assigneeUserId: null };
 }
 
+function assigneeSelectionAliases(selection: Partial<AssigneeSelection>): string[] {
+  const encoded = assigneeValueFromSelection(selection);
+  if (!encoded) return [];
+
+  const parsed = parseAssigneeValue(encoded);
+  return [
+    encoded,
+    parsed.assigneeAgentId,
+    parsed.assigneeUserId,
+  ].filter((value): value is string => Boolean(value));
+}
+
+export function isAssigneeFilterSelected(
+  selectedValues: string[],
+  selection: Partial<AssigneeSelection>,
+): boolean {
+  const aliases = assigneeSelectionAliases(selection);
+  return aliases.some((value) => selectedValues.includes(value));
+}
+
+export function toggleAssigneeFilterSelection(
+  selectedValues: string[],
+  selection: Partial<AssigneeSelection>,
+): string[] {
+  const aliases = assigneeSelectionAliases(selection);
+  if (aliases.length === 0) return selectedValues;
+  const isSelected = aliases.some((value) => selectedValues.includes(value));
+  if (isSelected) {
+    return selectedValues.filter((value) => !aliases.includes(value));
+  }
+  return [...selectedValues, aliases[0]];
+}
+
 export function currentUserAssigneeOption(currentUserId: string | null | undefined): AssigneeOption[] {
   if (!currentUserId) return [];
   return [{

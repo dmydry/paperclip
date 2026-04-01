@@ -7,7 +7,11 @@ import { issuesApi } from "../api/issues";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
-import { formatAssigneeUserLabel } from "../lib/assignees";
+import {
+  formatAssigneeUserLabel,
+  isAssigneeFilterSelected,
+  toggleAssigneeFilterSelection,
+} from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
 import { formatDate, cn } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
@@ -110,11 +114,7 @@ function applyFilters(issues: Issue[], state: IssueViewState, currentUserId?: st
       if (state.assignees.includes("__unassigned") && !value) return true;
       if (state.assignees.includes("__me") && currentUserId && issue.assigneeUserId === currentUserId) return true;
       if (!value) return false;
-      return (
-        state.assignees.includes(value) ||
-        (issue.assigneeAgentId ? state.assignees.includes(issue.assigneeAgentId) : false) ||
-        (issue.assigneeUserId ? state.assignees.includes(issue.assigneeUserId) : false)
-      );
+      return isAssigneeFilterSelected(state.assignees, issue);
     });
   }
   if (state.labels.length > 0) result = result.filter((i) => (i.labelIds ?? []).some((id) => state.labels.includes(id)));
@@ -543,11 +543,40 @@ export function IssuesList({
                             <span className="text-sm">Me</span>
                           </label>
                         )}
+                        {activeUserMembers
+                          .filter((member) => member.principalId !== currentUserId)
+                          .map((member) => {
+                            const userId = member.principalId;
+                            const label =
+                              userName(userId)
+                              ?? formatAssigneeUserLabel(userId, currentUserId)
+                              ?? "User";
+                            return (
+                              <label key={`user:${userId}`} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
+                                <Checkbox
+                                  checked={isAssigneeFilterSelected(viewState.assignees, { assigneeUserId: userId })}
+                                  onCheckedChange={() =>
+                                    updateView({
+                                      assignees: toggleAssigneeFilterSelection(viewState.assignees, {
+                                        assigneeUserId: userId,
+                                      }),
+                                    })}
+                                />
+                                <User className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="text-sm">{label}</span>
+                              </label>
+                            );
+                          })}
                         {(agents ?? []).map((agent) => (
                           <label key={agent.id} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
                             <Checkbox
-                              checked={viewState.assignees.includes(agent.id)}
-                              onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, agent.id) })}
+                              checked={isAssigneeFilterSelected(viewState.assignees, { assigneeAgentId: agent.id })}
+                              onCheckedChange={() =>
+                                updateView({
+                                  assignees: toggleAssigneeFilterSelection(viewState.assignees, {
+                                    assigneeAgentId: agent.id,
+                                  }),
+                                })}
                             />
                             <span className="text-sm">{agent.name}</span>
                           </label>
