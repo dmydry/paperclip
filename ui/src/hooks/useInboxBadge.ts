@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { approvalsApi } from "../api/approvals";
 import { accessApi } from "../api/access";
 import { ApiError } from "../api/client";
-import { approvalsApi } from "../api/approvals";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import {
   computeInboxBadgeData,
-  getRecentTouchedIssues,
   loadDismissedInboxItems,
   saveDismissedInboxItems,
   loadReadInboxItems,
@@ -107,18 +106,15 @@ export function useInboxBadge(companyId: string | null | undefined) {
     enabled: !!companyId,
   });
 
-  const { data: mineIssuesRaw = [] } = useQuery({
-    queryKey: queryKeys.issues.listMineByMe(companyId!),
+  const { data: unreadTouchedIssues = [] } = useQuery({
+    queryKey: queryKeys.issues.listUnreadTouchedByMe(companyId!),
     queryFn: () =>
       issuesApi.list(companyId!, {
-        touchedByUserId: "me",
-        inboxArchivedByUserId: "me",
+        unreadForUserId: "me",
         status: INBOX_ISSUE_STATUSES,
       }),
     enabled: !!companyId,
   });
-
-  const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
 
   const { data: heartbeatRuns = [] } = useQuery({
     queryKey: queryKeys.heartbeats(companyId!),
@@ -133,9 +129,9 @@ export function useInboxBadge(companyId: string | null | undefined) {
         joinRequests,
         dashboard,
         heartbeatRuns,
-        mineIssues,
+        unreadTouchedIssues: unreadTouchedIssues.filter((issue) => issue.isUnreadForMe),
         dismissed,
       }),
-    [approvals, joinRequests, dashboard, heartbeatRuns, mineIssues, dismissed],
+    [approvals, joinRequests, dashboard, heartbeatRuns, unreadTouchedIssues, dismissed],
   );
 }

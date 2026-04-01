@@ -41,7 +41,7 @@ export interface InboxBadgeData {
   approvals: number;
   failedRuns: number;
   joinRequests: number;
-  mineIssues: number;
+  unreadTouchedIssues: number;
   alerts: number;
 }
 
@@ -270,14 +270,14 @@ export function computeInboxBadgeData({
   joinRequests,
   dashboard,
   heartbeatRuns,
-  mineIssues,
+  unreadTouchedIssues,
   dismissed,
 }: {
   approvals: Approval[];
   joinRequests: JoinRequest[];
   dashboard: DashboardSummary | undefined;
   heartbeatRuns: HeartbeatRun[];
-  mineIssues: Issue[];
+  unreadTouchedIssues: Issue[];
   dismissed: Set<string>;
 }): InboxBadgeData {
   const actionableApprovals = approvals.filter(
@@ -291,7 +291,7 @@ export function computeInboxBadgeData({
   const visibleJoinRequests = joinRequests.filter(
     (jr) => !dismissed.has(`join:${jr.id}`),
   ).length;
-  const visibleMineIssues = mineIssues.length;
+  const visibleUnreadTouchedIssues = unreadTouchedIssues.length;
   const agentErrorCount = dashboard?.agents.error ?? 0;
   const monthBudgetCents = dashboard?.costs.monthBudgetCents ?? 0;
   const monthUtilizationPercent = dashboard?.costs.monthUtilizationPercent ?? 0;
@@ -306,11 +306,11 @@ export function computeInboxBadgeData({
   const alerts = Number(showAggregateAgentError) + Number(showBudgetAlert);
 
   return {
-    inbox: actionableApprovals + visibleJoinRequests + failedRuns + visibleMineIssues + alerts,
+    inbox: actionableApprovals + visibleJoinRequests + failedRuns + visibleUnreadTouchedIssues + alerts,
     approvals: actionableApprovals,
     failedRuns,
     joinRequests: visibleJoinRequests,
-    mineIssues: visibleMineIssues,
+    unreadTouchedIssues: visibleUnreadTouchedIssues,
     alerts,
   };
 }

@@ -213,7 +213,7 @@ describe("inbox helpers", () => {
         makeRun("run-latest", "timed_out", "2026-03-11T01:00:00.000Z"),
         makeRun("run-other-agent", "failed", "2026-03-11T02:00:00.000Z", "agent-2"),
       ],
-      mineIssues: [makeIssue("1", true)],
+      unreadTouchedIssues: [makeIssue("1", true)],
       dismissed: new Set<string>(),
     });
 
@@ -222,7 +222,7 @@ describe("inbox helpers", () => {
       approvals: 1,
       failedRuns: 2,
       joinRequests: 1,
-      mineIssues: 1,
+      unreadTouchedIssues: 1,
       alerts: 1,
     });
   });
@@ -233,7 +233,7 @@ describe("inbox helpers", () => {
       joinRequests: [],
       dashboard,
       heartbeatRuns: [makeRun("run-1", "failed", "2026-03-11T00:00:00.000Z")],
-      mineIssues: [],
+      unreadTouchedIssues: [],
       dismissed: new Set<string>(["run:run-1", "alert:budget", "alert:agent-errors"]),
     });
 
@@ -242,7 +242,7 @@ describe("inbox helpers", () => {
       approvals: 0,
       failedRuns: 0,
       joinRequests: 0,
-      mineIssues: 0,
+      unreadTouchedIssues: 0,
       alerts: 0,
     });
   });
