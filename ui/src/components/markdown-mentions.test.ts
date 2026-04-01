@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 import { applyMention, type MentionLike } from "./markdown-mentions";
 
 describe("applyMention", () => {
-  it("replaces the latest agent mention query with the full agent name", () => {
-    const option: MentionLike = { name: "Marketing Engineer", kind: "agent" };
+  it("replaces the latest agent mention query with an explicit agent mention link", () => {
+    const option: MentionLike = {
+      name: "Marketing Engineer",
+      kind: "agent",
+      agentId: "agent-1",
+      agentIcon: "wrench",
+    };
 
-    expect(applyMention("Ping @Mark", "Mark", option)).toBe("Ping @Marketing Engineer ");
+    expect(applyMention("Ping @Mark", "Mark", option)).toBe(
+      "Ping [@Marketing Engineer](agent://agent-1?i=wrench) ",
+    );
   });
 
-  it("replaces the latest mention occurrence when multiple @ tokens exist", () => {
-    const option: MentionLike = { name: "CMO", kind: "agent" };
+  it("keeps user mentions as plain text", () => {
+    const option: MentionLike = { name: "Dmitry", kind: "user" };
 
-    expect(applyMention("@CEO and @CM", "CM", option)).toBe("@CEO and @CMO ");
+    expect(applyMention("@CEO and @Dm", "Dm", option)).toBe("@CEO and @Dmitry ");
   });
 });

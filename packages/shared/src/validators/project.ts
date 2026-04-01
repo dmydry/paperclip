@@ -28,6 +28,11 @@ export const projectExecutionWorkspacePolicySchema = z
   })
   .strict();
 
+export const projectWorkspaceRuntimeConfigSchema = z.object({
+  workspaceRuntime: z.record(z.unknown()).optional().nullable(),
+  desiredState: z.enum(["running", "stopped"]).optional().nullable(),
+}).strict();
+
 const projectWorkspaceSourceTypeSchema = z.enum(["local_path", "git_repo", "remote_managed", "non_git_path"]);
 const projectWorkspaceVisibilitySchema = z.enum(["default", "advanced"]);
 
@@ -45,6 +50,7 @@ const projectWorkspaceFields = {
   remoteWorkspaceRef: z.string().optional().nullable(),
   sharedWorkspaceKey: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
+  runtimeConfig: projectWorkspaceRuntimeConfigSchema.optional().nullable(),
 };
 
 function validateProjectWorkspace(value: Record<string, unknown>, ctx: z.RefinementCtx) {

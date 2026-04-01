@@ -1,8 +1,10 @@
-import { buildProjectMentionHref } from "@paperclipai/shared";
+import { buildAgentMentionHref, buildProjectMentionHref } from "@paperclipai/shared";
 
 export interface MentionLike {
   name: string;
   kind?: "agent" | "user" | "project";
+  agentId?: string;
+  agentIcon?: string | null;
   projectId?: string;
   projectColor?: string | null;
 }
@@ -10,6 +12,12 @@ export interface MentionLike {
 export function mentionMarkdown(option: MentionLike): string {
   if (option.kind === "project" && option.projectId) {
     return `[@${option.name}](${buildProjectMentionHref(option.projectId, option.projectColor ?? null)}) `;
+  }
+  if (option.kind === "agent") {
+    const agentId = option.agentId;
+    if (agentId) {
+      return `[@${option.name}](${buildAgentMentionHref(agentId, option.agentIcon ?? null)}) `;
+    }
   }
   return `@${option.name} `;
 }

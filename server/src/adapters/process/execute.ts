@@ -5,7 +5,9 @@ import {
   asStringArray,
   parseObject,
   buildPaperclipEnv,
-  redactEnvForLogs,
+  buildInvocationEnvForLogs,
+  ensurePathInEnv,
+  resolveCommandForLogs,
   runChildProcess,
 } from "../utils.js";
 
@@ -56,6 +58,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }
+  const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
+  const loggedEnv = buildInvocationEnvForLogs(env, {
+    runtimeEnv,
+    includeRuntimeKeys: ["HOME"],
+    resolvedCommand,
+  });
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 15);
@@ -63,10 +72,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (onMeta) {
     await onMeta({
       adapterType: "process",
-      command,
+      command: resolvedCommand,
       cwd,
       commandArgs: args,
-      env: redactEnvForLogs(env),
+      env: loggedEnv,
     });
   }
 

@@ -6,9 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   CodeMirrorEditor,
   MDXEditor,
@@ -27,7 +27,11 @@ import {
   thematicBreakPlugin,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { parseProjectMentionHref } from "@paperclipai/shared";
+import { buildAgentMentionHref, buildProjectMentionHref } from "@paperclipai/shared";
+import { AgentIcon } from "./AgentIconPicker";
+import { applyMentionChipDecoration, clearMentionChipDecoration, parseMentionChipHref } from "../lib/mention-chips";
+import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
+import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { cn } from "../lib/utils";
 import { applyMention } from "./markdown-mentions";
 
@@ -37,6 +41,8 @@ export interface MentionOption {
   id: string;
   name: string;
   kind?: "agent" | "user" | "project";
+  agentId?: string;
+  agentIcon?: string | null;
   projectId?: string;
   projectColor?: string | null;
 }
@@ -66,12 +72,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function isSafeMarkdownLinkUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return true;
+  return !/^(javascript|data|vbscript):/i.test(trimmed);
+}
+
 /* ---- Mention detection helpers ---- */
 
 interface MentionState {
   query: string;
   top: number;
   left: number;
+  /** Viewport-relative coords for portal positioning */
+  viewportTop: number;
+  viewportLeft: number;
   textNode: Text;
   atPos: number;
   endPos: number;
@@ -145,34 +160,11 @@ function detectMention(container: HTMLElement): MentionState | null {
     query,
     top: rect.bottom - containerRect.top,
     left: rect.left - containerRect.left,
+    viewportTop: rect.bottom,
+    viewportLeft: rect.left,
     textNode: textNode as Text,
     atPos,
     endPos: offset,
-  };
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const trimmed = hex.trim();
-  const match = /^#([0-9a-f]{6})$/i.exec(trimmed);
-  if (!match) return null;
-  const value = match[1];
-  return {
-    r: parseInt(value.slice(0, 2), 16),
-    g: parseInt(value.slice(2, 4), 16),
-    b: parseInt(value.slice(4, 6), 16),
-  };
-}
-
-function mentionChipStyle(color: string | null): CSSProperties | undefined {
-  if (!color) return undefined;
-  const rgb = hexToRgb(color);
-  if (!rgb) return undefined;
-  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-  const textColor = luminance > 0.55 ? "#111827" : "#f8fafc";
-  return {
-    borderColor: color,
-    backgroundColor: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.22)`,
-    color: textColor,
   };
 }
 
@@ -206,11 +198,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   const mentionStateRef = useRef<MentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionActive = mentionState !== null && mentions && mentions.length > 0;
-  const projectColorById = useMemo(() => {
-    const map = new Map<string, string | null>();
+  const mentionOptionByKey = useMemo(() => {
+    const map = new Map<string, MentionOption>();
     for (const mention of mentions ?? []) {
+      if (mention.kind === "agent") {
+        const agentId = mention.agentId ?? mention.id.replace(/^agent:/, "");
+        map.set(`agent:${agentId}`, mention);
+      }
       if (mention.kind === "project" && mention.projectId) {
-        map.set(mention.projectId, mention.projectColor ?? null);
+        map.set(`project:${mention.projectId}`, mention);
       }
     }
     return map;
@@ -271,8 +267,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       listsPlugin(),
       quotePlugin(),
       tablePlugin(),
-      linkPlugin(),
+      linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
       linkDialogPlugin(),
+      mentionDeletionPlugin(),
       thematicBreakPlugin(),
       codeBlockPlugin({
         defaultCodeBlockLanguage: "txt",
@@ -300,31 +297,28 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     const links = editable.querySelectorAll("a");
     for (const node of links) {
       const link = node as HTMLAnchorElement;
-      const parsed = parseProjectMentionHref(link.getAttribute("href") ?? "");
+      const parsed = parseMentionChipHref(link.getAttribute("href") ?? "");
       if (!parsed) {
-        if (link.dataset.projectMention === "true") {
-          link.dataset.projectMention = "false";
-          link.classList.remove("paperclip-project-mention-chip");
-          link.removeAttribute("contenteditable");
-          link.style.removeProperty("border-color");
-          link.style.removeProperty("background-color");
-          link.style.removeProperty("color");
-        }
+        clearMentionChipDecoration(link);
         continue;
       }
 
-      const color = parsed.color ?? projectColorById.get(parsed.projectId) ?? null;
-      link.dataset.projectMention = "true";
-      link.classList.add("paperclip-project-mention-chip");
-      link.setAttribute("contenteditable", "false");
-      const style = mentionChipStyle(color);
-      if (style) {
-        link.style.borderColor = style.borderColor ?? "";
-        link.style.backgroundColor = style.backgroundColor ?? "";
-        link.style.color = style.color ?? "";
+      if (parsed.kind === "project") {
+        const option = mentionOptionByKey.get(`project:${parsed.projectId}`);
+        applyMentionChipDecoration(link, {
+          ...parsed,
+          color: parsed.color ?? option?.projectColor ?? null,
+        });
+        continue;
       }
+
+      const option = mentionOptionByKey.get(`agent:${parsed.agentId}`);
+      applyMentionChipDecoration(link, {
+        ...parsed,
+        icon: parsed.icon ?? option?.agentIcon ?? null,
+      });
     }
-  }, [projectColorById]);
+  }, [mentionOptionByKey]);
 
   // Mention detection: listen for selection changes and input events
   const checkMention = useCallback(() => {
@@ -378,7 +372,6 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     (option: MentionOption) => {
       const state = mentionStateRef.current;
       if (!state) return;
-
       const current = latestValueRef.current;
       const next = applyMention(current, state.query, option);
       if (next !== current) {
@@ -388,8 +381,66 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       }
 
       requestAnimationFrame(() => {
-        ref.current?.focus(undefined, { defaultSelection: "rootEnd" });
-        decorateProjectMentions();
+        requestAnimationFrame(() => {
+          const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+          if (!(editable instanceof HTMLElement)) return;
+          decorateProjectMentions();
+          editable.focus();
+
+          if (option.kind === "user") {
+            ref.current?.focus(undefined, { defaultSelection: "rootEnd" });
+            return;
+          }
+
+          const mentionHref = option.kind === "project" && option.projectId
+            ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
+            : buildAgentMentionHref(
+                option.agentId ?? option.id.replace(/^agent:/, ""),
+                option.agentIcon ?? null,
+              );
+          const matchingMentions = Array.from(editable.querySelectorAll("a"))
+            .filter((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)
+            .filter((link) => {
+              const href = link.getAttribute("href") ?? "";
+              return href === mentionHref && link.textContent === `@${option.name}`;
+            });
+          const containerRect = containerRef.current?.getBoundingClientRect();
+          const target = matchingMentions.sort((a, b) => {
+            const rectA = a.getBoundingClientRect();
+            const rectB = b.getBoundingClientRect();
+            const leftA = containerRect ? rectA.left - containerRect.left : rectA.left;
+            const topA = containerRect ? rectA.top - containerRect.top : rectA.top;
+            const leftB = containerRect ? rectB.left - containerRect.left : rectB.left;
+            const topB = containerRect ? rectB.top - containerRect.top : rectB.top;
+            const distA = Math.hypot(leftA - state.left, topA - state.top);
+            const distB = Math.hypot(leftB - state.left, topB - state.top);
+            return distA - distB;
+          })[0] ?? null;
+          if (!target) {
+            ref.current?.focus(undefined, { defaultSelection: "rootEnd" });
+            return;
+          }
+
+          const selection = window.getSelection();
+          if (!selection) return;
+          const range = document.createRange();
+          const nextSibling = target.nextSibling;
+          if (nextSibling?.nodeType === Node.TEXT_NODE) {
+            const text = nextSibling.textContent ?? "";
+            if (text.startsWith(" ")) {
+              range.setStart(nextSibling, 1);
+              range.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(range);
+              return;
+            }
+          }
+
+          range.setStartAfter(target);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        });
       });
 
       mentionStateRef.current = null;
@@ -495,47 +546,57 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           "paperclip-mdxeditor-content focus:outline-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:list-item",
           contentClassName,
         )}
+        additionalLexicalNodes={[MentionAwareLinkNode, mentionAwareLinkNodeReplacement]}
         plugins={plugins}
       />
 
-      {/* Mention dropdown */}
-      {mentionActive && filteredMentions.length > 0 && (
-        <div
-          className="absolute z-50 min-w-[180px] max-h-[200px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
-          style={{ top: mentionState.top + 4, left: mentionState.left }}
-        >
-          {filteredMentions.map((option, i) => (
-            <button
-              key={option.id}
-              type="button"
-              className={cn(
-                "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
-                i === mentionIndex && "bg-accent",
-              )}
-              onMouseDown={(e) => {
-                e.preventDefault(); // prevent blur
-                selectMention(option);
-              }}
-              onMouseEnter={() => setMentionIndex(i)}
-            >
-              {option.kind === "project" && option.projectId ? (
-                <span
-                  className="inline-flex h-2 w-2 rounded-full border border-border/50"
-                  style={{ backgroundColor: option.projectColor ?? "#64748b" }}
-                />
-              ) : (
-                <span className="text-muted-foreground">@</span>
-              )}
-              <span>{option.name}</span>
-              {option.kind === "project" && option.projectId && (
-                <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                  Project
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Mention dropdown — rendered via portal so it isn't clipped by overflow containers */}
+      {mentionActive && filteredMentions.length > 0 &&
+        createPortal(
+          <div
+            className="fixed z-[9999] min-w-[180px] max-w-[calc(100vw-16px)] max-h-[200px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+            style={{
+              top: Math.min(mentionState.viewportTop + 4, window.innerHeight - 208),
+              left: Math.max(8, Math.min(mentionState.viewportLeft, window.innerWidth - 188)),
+            }}
+          >
+            {filteredMentions.map((option, i) => (
+              <button
+                key={option.id}
+                className={cn(
+                  "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
+                  i === mentionIndex && "bg-accent",
+                )}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // prevent blur
+                  selectMention(option);
+                }}
+                onMouseEnter={() => setMentionIndex(i)}
+              >
+                {option.kind === "project" && option.projectId ? (
+                  <span
+                    className="inline-flex h-2 w-2 rounded-full border border-border/50"
+                    style={{ backgroundColor: option.projectColor ?? "#64748b" }}
+                  />
+                ) : option.kind === "agent" ? (
+                  <AgentIcon
+                    icon={option.agentIcon}
+                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                  />
+                ) : (
+                  <span className="text-muted-foreground">@</span>
+                )}
+                <span>{option.name}</span>
+                {option.kind === "project" && option.projectId && (
+                  <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Project
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
 
       {isDragOver && canDropImage && (
         <div
