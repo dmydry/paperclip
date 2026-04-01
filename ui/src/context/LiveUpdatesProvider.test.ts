@@ -5,7 +5,7 @@ import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 import { queryKeys } from "../lib/queryKeys";
 
 describe("LiveUpdatesProvider issue invalidation", () => {
-  it("refreshes touched inbox queries for issue activity", () => {
+  it("refreshes company issue collections for issue activity", () => {
     const invalidations: unknown[] = [];
     const queryClient = {
       invalidateQueries: (input: unknown) => {
@@ -25,13 +25,10 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     );
 
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listMineByMe("company-1"),
+      queryKey: ["issues", "company-1"],
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listTouchedByMe("company-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listUnreadTouchedByMe("company-1"),
+      queryKey: queryKeys.dashboard("company-1"),
     });
   });
 });
