@@ -60,7 +60,7 @@ import {
 } from "../lib/inbox";
 import { useDismissedInboxItems, useReadInboxItems } from "../hooks/useInboxBadge";
 
-const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
+const INBOX_UNREAD_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
 
 type InboxCategoryFilter =
   | "everything"
@@ -708,7 +708,7 @@ export function Inbox() {
     queryFn: () =>
       issuesApi.list(selectedCompanyId!, {
         unreadForUserId: "me",
-        status: INBOX_ISSUE_STATUSES,
+        status: INBOX_UNREAD_ISSUE_STATUSES,
       }),
     enabled: !!selectedCompanyId,
   });

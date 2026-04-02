@@ -8,7 +8,7 @@ import { accessService } from "../services/access.js";
 import { dashboardService } from "../services/dashboard.js";
 import { assertCompanyAccess } from "./authz.js";
 
-const INBOX_BADGE_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
+const INBOX_BADGE_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
 
 export function sidebarBadgeRoutes(db: Db) {
   const router = Router();

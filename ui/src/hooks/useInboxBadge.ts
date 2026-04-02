@@ -16,7 +16,7 @@ import {
   READ_ITEMS_KEY,
 } from "../lib/inbox";
 
-const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
+const INBOX_UNREAD_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
 
 export function useDismissedInboxItems() {
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedInboxItems);
@@ -111,7 +111,7 @@ export function useInboxBadge(companyId: string | null | undefined) {
     queryFn: () =>
       issuesApi.list(companyId!, {
         unreadForUserId: "me",
-        status: INBOX_ISSUE_STATUSES,
+        status: INBOX_UNREAD_ISSUE_STATUSES,
       }),
     enabled: !!companyId,
   });
