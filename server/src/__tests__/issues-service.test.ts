@@ -9,6 +9,7 @@ import {
   instanceSettings,
   issueComments,
   issueInboxArchives,
+  issueReadStates,
   issues,
   projectWorkspaces,
   projects,
@@ -41,6 +42,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(issueReadStates);
     await db.delete(issueComments);
     await db.delete(issueInboxArchives);
     await db.delete(activityLog);
@@ -402,6 +404,88 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       resurfacedIssueId,
     ]));
   });
+
+  it("returns unread assigned issues with fresh external comments even before the assignee reads them", async () => {
+    const companyId = randomUUID();
+    const userId = "user-1";
+    const otherUserId = "user-2";
+    const unreadAssignedIssueId = randomUUID();
+    const readAssignedIssueId = randomUUID();
+    const unrelatedIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: unreadAssignedIssueId,
+        companyId,
+        title: "Unread assigned issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: new Date("2026-04-02T11:00:00.000Z"),
+        updatedAt: new Date("2026-04-02T11:00:00.000Z"),
+      },
+      {
+        id: readAssignedIssueId,
+        companyId,
+        title: "Read assigned issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: new Date("2026-04-02T11:30:00.000Z"),
+        updatedAt: new Date("2026-04-02T11:30:00.000Z"),
+      },
+      {
+        id: unrelatedIssueId,
+        companyId,
+        title: "Unrelated issue",
+        status: "todo",
+        priority: "medium",
+        createdAt: new Date("2026-04-02T11:45:00.000Z"),
+        updatedAt: new Date("2026-04-02T11:45:00.000Z"),
+      },
+    ]);
+
+    await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: unreadAssignedIssueId,
+        authorUserId: otherUserId,
+        body: "@dmydry hello",
+        createdAt: new Date("2026-04-02T12:00:00.000Z"),
+        updatedAt: new Date("2026-04-02T12:00:00.000Z"),
+      },
+      {
+        companyId,
+        issueId: readAssignedIssueId,
+        authorUserId: otherUserId,
+        body: "already read",
+        createdAt: new Date("2026-04-02T12:05:00.000Z"),
+        updatedAt: new Date("2026-04-02T12:05:00.000Z"),
+      },
+    ]);
+
+    await svc.markRead(
+      companyId,
+      readAssignedIssueId,
+      userId,
+      new Date("2026-04-02T12:06:00.000Z"),
+    );
+
+    const result = await svc.list(companyId, {
+      unreadForUserId: userId,
+      status: "todo",
+    });
+
+    expect(result.map((issue) => issue.id)).toEqual([unreadAssignedIssueId]);
+    expect(result[0]?.isUnreadForMe).toBe(true);
+  });
 });
 
 describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
@@ -416,6 +500,7 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(issueReadStates);
     await db.delete(issueComments);
     await db.delete(issueInboxArchives);
     await db.delete(activityLog);

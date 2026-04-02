@@ -182,10 +182,19 @@ async function getWorkspaceInheritanceIssue(
   return issue;
 }
 
-function touchedByUserCondition(_companyId: string, userId: string) {
+function touchedByUserCondition(companyId: string, userId: string) {
   return sql<boolean>`
     (
+      ${issues.createdByUserId} = ${userId}
+      OR
       ${issues.assigneeUserId} = ${userId}
+      OR EXISTS (
+        SELECT 1
+        FROM ${issueComments}
+        WHERE ${issueComments.issueId} = ${issues.id}
+          AND ${issueComments.companyId} = ${companyId}
+          AND ${issueComments.authorUserId} = ${userId}
+      )
     )
   `;
 }
@@ -238,14 +247,35 @@ function myLastReadAtExpr(companyId: string, userId: string) {
   `;
 }
 
+function inboxParticipantForUserCondition(companyId: string, userId: string) {
+  return sql<boolean>`
+    (
+      ${issues.assigneeUserId} = ${userId}
+      OR EXISTS (
+        SELECT 1
+        FROM ${issueComments}
+        WHERE ${issueComments.issueId} = ${issues.id}
+          AND ${issueComments.companyId} = ${companyId}
+          AND ${issueComments.authorUserId} = ${userId}
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM ${issueReadStates}
+        WHERE ${issueReadStates.issueId} = ${issues.id}
+          AND ${issueReadStates.companyId} = ${companyId}
+          AND ${issueReadStates.userId} = ${userId}
+      )
+    )
+  `;
+}
+
 function myLastTouchAtExpr(companyId: string, userId: string) {
   const myLastCommentAt = myLastCommentAtExpr(companyId, userId);
   const myLastReadAt = myLastReadAtExpr(companyId, userId);
   return sql<Date | null>`
     GREATEST(
       COALESCE(${myLastCommentAt}, to_timestamp(0)),
-      COALESCE(${myLastReadAt}, to_timestamp(0)),
-      COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
+      COALESCE(${myLastReadAt}, to_timestamp(0))
     )
   `;
 }
@@ -281,11 +311,11 @@ function issueLastActivityAtExpr(companyId: string, userId: string) {
 }
 
 function unreadForUserCondition(companyId: string, userId: string) {
-  const touchedCondition = touchedByUserCondition(companyId, userId);
+  const participantCondition = inboxParticipantForUserCondition(companyId, userId);
   const myLastTouchAt = myLastTouchAtExpr(companyId, userId);
   return sql<boolean>`
     (
-      ${touchedCondition}
+      ${participantCondition}
       AND EXISTS (
         SELECT 1
         FROM ${issueComments}
@@ -371,15 +401,15 @@ export function deriveIssueUserContext(
 
   const myLastCommentAt = normalizeDate(stats?.myLastCommentAt);
   const myLastReadAt = normalizeDate(stats?.myLastReadAt);
-  const assignedTouchAt = issue.assigneeUserId === userId ? normalizeDate(issue.updatedAt) : null;
-  const myLastTouchAt = [myLastCommentAt, myLastReadAt, assignedTouchAt]
+  const myLastTouchAt = [myLastCommentAt, myLastReadAt]
     .filter((value): value is Date => value instanceof Date)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const lastExternalCommentAt = normalizeDate(stats?.lastExternalCommentAt);
+  const hasInboxContext = issue.assigneeUserId === userId || myLastTouchAt instanceof Date;
   const isUnreadForMe = Boolean(
-    myLastTouchAt &&
     lastExternalCommentAt &&
-    lastExternalCommentAt.getTime() > myLastTouchAt.getTime(),
+    hasInboxContext &&
+    (!myLastTouchAt || lastExternalCommentAt.getTime() > myLastTouchAt.getTime()),
   );
 
   return {

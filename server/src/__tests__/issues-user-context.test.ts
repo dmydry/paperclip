@@ -62,7 +62,7 @@ describe("deriveIssueUserContext", () => {
     expect(context.isUnreadForMe).toBe(false);
   });
 
-  it("uses issue updated time as fallback touch point for assignee", () => {
+  it("treats assigned issues with unseen external comments as unread", () => {
     const context = deriveIssueUserContext(
       makeIssue({ assigneeUserId: "user-1", updatedAt: new Date("2026-03-06T15:00:00.000Z") }),
       "user-1",
@@ -73,8 +73,8 @@ describe("deriveIssueUserContext", () => {
       },
     );
 
-    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:00:00.000Z");
-    expect(context.isUnreadForMe).toBe(false);
+    expect(context.myLastTouchAt).toBeNull();
+    expect(context.isUnreadForMe).toBe(true);
   });
 
   it("uses latest read timestamp to clear unread without requiring a comment", () => {
@@ -108,6 +108,24 @@ describe("deriveIssueUserContext", () => {
 
     expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T12:00:00.000Z");
     expect(context.isUnreadForMe).toBe(true);
+  });
+
+  it("uses latest read timestamp to clear unread on assigned issues", () => {
+    const context = deriveIssueUserContext(
+      makeIssue({
+        assigneeUserId: "user-1",
+        updatedAt: new Date("2026-03-06T15:00:00.000Z"),
+      }),
+      "user-1",
+      {
+        myLastCommentAt: null,
+        myLastReadAt: new Date("2026-03-06T15:01:00.000Z"),
+        lastExternalCommentAt: new Date("2026-03-06T14:59:00.000Z"),
+      },
+    );
+
+    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:01:00.000Z");
+    expect(context.isUnreadForMe).toBe(false);
   });
 
   it("handles SQL timestamp strings without throwing", () => {
