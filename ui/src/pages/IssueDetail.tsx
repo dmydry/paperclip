@@ -904,7 +904,7 @@ export function IssueDetail() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown"
+        accept="image/*,application/pdf,application/zip,application/x-zip-compressed,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown,.zip"
         className="hidden"
         onChange={handleFilePicked}
         multiple

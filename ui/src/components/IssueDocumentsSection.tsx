@@ -93,11 +93,6 @@ function getRevisionActorLabel(revision: DocumentRevision) {
   return "system";
 }
 
-function documentHasUnsavedChanges(doc: IssueDocument, draft: DraftState | null) {
-  if (!draft || draft.isNew || draft.key !== doc.key) return false;
-  return draft.body !== doc.body || (doc.title ?? "") !== draft.title;
-}
-
 export function IssueDocumentsSection({
   issue,
   canDeleteDocuments,
@@ -123,9 +118,11 @@ export function IssueDocumentsSection({
   const [highlightDocumentKey, setHighlightDocumentKey] = useState<string | null>(null);
   const [revisionMenuOpenKey, setRevisionMenuOpenKey] = useState<string | null>(null);
   const [selectedRevisionIds, setSelectedRevisionIds] = useState<Record<string, string | null>>({});
+  const [hydratedDocumentBodies, setHydratedDocumentBodies] = useState<Record<string, string>>({});
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedDocumentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasScrolledToHashRef = useRef(false);
+  const hydratedDocumentKeysRef = useRef<Set<string>>(new Set());
   const {
     state: autosaveState,
     markDirty,
@@ -148,6 +145,38 @@ export function IssueDocumentsSection({
     },
     enabled: Boolean(revisionMenuOpenKey),
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    const missingDocs = (documents ?? []).filter((doc) => {
+      const hasBody = typeof doc.body === "string" && doc.body.trim().length > 0;
+      return !hasBody && !hydratedDocumentKeysRef.current.has(doc.key);
+    });
+    if (missingDocs.length === 0) return;
+    void Promise.all(
+      missingDocs.map(async (doc) => {
+        hydratedDocumentKeysRef.current.add(doc.key);
+        try {
+          const fullDoc = await issuesApi.getDocument(issue.id, doc.key);
+          return { key: doc.key, body: fullDoc.body };
+        } catch {
+          hydratedDocumentKeysRef.current.delete(doc.key);
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const nextEntries = results.filter((item): item is { key: string; body: string } => Boolean(item));
+      if (nextEntries.length === 0) return;
+      setHydratedDocumentBodies((current) => ({
+        ...current,
+        ...Object.fromEntries(nextEntries.map((item) => [item.key, item.body])),
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documents, issue.id]);
 
   const invalidateIssueDocuments = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) });
@@ -214,6 +243,10 @@ export function IssueDocumentsSection({
       ? "Use lowercase letters, numbers, -, or _, and start with a letter or number."
       : null;
 
+  const getEffectiveDocumentBody = useCallback((doc: IssueDocument) => {
+    return hydratedDocumentBodies[doc.key] ?? doc.body ?? "";
+  }, [hydratedDocumentBodies]);
+
   const resetAutosaveState = useCallback(() => {
     setAutosaveDocumentKey(null);
     reset();
@@ -247,7 +280,7 @@ export function IssueDocumentsSection({
     setDraft({
       key: conflictedDraft?.key ?? doc.key,
       title: conflictedDraft?.title ?? doc.title ?? "",
-      body: conflictedDraft?.body ?? doc.body,
+      body: conflictedDraft?.body ?? getEffectiveDocumentBody(doc),
       baseRevisionId: conflictedDraft?.baseRevisionId ?? doc.latestRevisionId,
       isNew: false,
     });
@@ -305,7 +338,7 @@ export function IssueDocumentsSection({
     if (
       !currentDraft.isNew &&
       existing &&
-      existing.body === currentDraft.body &&
+      getEffectiveDocumentBody(existing) === currentDraft.body &&
       (existing.title ?? "") === currentDraft.title
     ) {
       if (options?.clearAfterSave) {
@@ -340,6 +373,7 @@ export function IssueDocumentsSection({
           isNew: false,
         };
       });
+      setHydratedDocumentBodies((current) => ({ ...current, [saved.key]: saved.body }));
       invalidateIssueDocuments();
     };
 
@@ -461,7 +495,14 @@ export function IssueDocumentsSection({
       returnToLatestRevision(doc.key);
       return;
     }
-    if (documentConflict?.key === doc.key || documentHasUnsavedChanges(doc, draft)) {
+    const baselineBody = getEffectiveDocumentBody(doc);
+    const hasUnsavedChanges = Boolean(
+      draft
+      && !draft.isNew
+      && draft.key === doc.key
+      && (draft.body !== baselineBody || (doc.title ?? "") !== draft.title),
+    );
+    if (documentConflict?.key === doc.key || hasUnsavedChanges) {
       setError("Save or cancel your local changes before viewing an older revision.");
       return;
     }
@@ -471,7 +512,7 @@ export function IssueDocumentsSection({
     setFoldedDocumentKeys((current) => current.filter((entry) => entry !== doc.key));
     setSelectedRevisionIds((current) => ({ ...current, [doc.key]: selectedRevision.id }));
     setError(null);
-  }, [documentConflict, draft, getDocumentRevisions, resetAutosaveState, returnToLatestRevision]);
+  }, [documentConflict, draft, getDocumentRevisions, getEffectiveDocumentBody, resetAutosaveState, returnToLatestRevision]);
 
   const handleDraftBlur = async (event: React.FocusEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
@@ -564,7 +605,7 @@ export function IssueDocumentsSection({
     const existing = sortedDocuments.find((doc) => doc.key === draft.key);
     if (!existing) return;
     const hasChanges =
-      existing.body !== draft.body ||
+      getEffectiveDocumentBody(existing) !== draft.body ||
       (existing.title ?? "") !== draft.title;
     if (!hasChanges) {
       if (autosaveState !== "saved") {
@@ -585,7 +626,7 @@ export function IssueDocumentsSection({
         clearTimeout(autosaveDebounceRef.current);
       }
     };
-  }, [autosaveState, commitDraft, documentConflict, draft, markDocumentDirty, resetAutosaveState, sortedDocuments]);
+  }, [autosaveState, commitDraft, documentConflict, draft, getEffectiveDocumentBody, markDocumentDirty, resetAutosaveState, sortedDocuments]);
 
   const documentBodyShellClassName = "mt-3 overflow-hidden rounded-md";
   const documentBodyPaddingClassName = "";
@@ -714,7 +755,11 @@ export function IssueDocumentsSection({
           const displayedTitle = selectedHistoricalRevision
             ? selectedHistoricalRevision.title ?? ""
             : activeDraft?.title ?? doc.title ?? "";
-          const displayedBody = selectedHistoricalRevision?.body ?? activeDraft?.body ?? doc.body;
+          const hydratedBody = hydratedDocumentBodies[doc.key];
+          const displayedBody = selectedHistoricalRevision?.body ?? activeDraft?.body ?? hydratedBody ?? doc.body ?? "";
+          const isBodyHydrating = !selectedHistoricalRevision
+            && !activeDraft
+            && !((typeof hydratedBody === "string" && hydratedBody.trim().length > 0) || (typeof doc.body === "string" && doc.body.trim().length > 0));
           const displayedRevisionNumber = selectedHistoricalRevision?.revisionNumber ?? doc.latestRevisionNumber;
           const displayedUpdatedAt = selectedHistoricalRevision?.createdAt ?? doc.updatedAt;
           const showTitle = !isPlanKey(doc.key) && !!displayedTitle.trim() && !titlesMatchKey(displayedTitle, doc.key);
@@ -997,31 +1042,54 @@ export function IssueDocumentsSection({
                         {renderBody(displayedBody, documentBodyContentClassName)}
                       </div>
                     ) : (
-                      <MarkdownEditor
-                        value={displayedBody}
-                        onChange={(body) => {
-                          markDocumentDirty(doc.key);
-                          setDraft((current) => {
-                            if (current && current.key === doc.key && !current.isNew) {
-                              return { ...current, body };
-                            }
-                            return {
-                              key: doc.key,
-                              title: doc.title ?? "",
-                              body,
-                              baseRevisionId: doc.latestRevisionId,
-                              isNew: false,
-                            };
-                          });
-                        }}
-                        placeholder="Markdown body"
-                        bordered={false}
-                        className="bg-transparent"
-                        contentClassName={documentBodyContentClassName}
-                        mentions={mentions}
-                        imageUploadHandler={imageUploadHandler}
-                        onSubmit={() => void commitDraft(activeDraft ?? draft, { clearAfterSave: false, trackAutosave: true })}
-                      />
+                      isBodyHydrating ? (
+                        <div className={cn(documentBodyContentClassName, "text-sm text-muted-foreground")}>
+                          Loading document body...
+                        </div>
+                      ) : (
+                        activeDraft ? (
+                          <MarkdownEditor
+                            value={displayedBody}
+                            onChange={(body) => {
+                              markDocumentDirty(doc.key);
+                              setDraft((current) => {
+                                if (current && current.key === doc.key && !current.isNew) {
+                                  return { ...current, body };
+                                }
+                                return {
+                                  key: doc.key,
+                                  title: doc.title ?? "",
+                                  body,
+                                  baseRevisionId: doc.latestRevisionId,
+                                  isNew: false,
+                                };
+                              });
+                            }}
+                            placeholder="Markdown body"
+                            bordered={false}
+                            className="bg-transparent"
+                            contentClassName={documentBodyContentClassName}
+                            mentions={mentions}
+                            imageUploadHandler={imageUploadHandler}
+                            onSubmit={() => void commitDraft(activeDraft ?? draft, { clearAfterSave: false, trackAutosave: true })}
+                          />
+                        ) : (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            className="cursor-text rounded-md p-3 text-left"
+                            onClick={() => beginEdit(doc.key)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                beginEdit(doc.key);
+                              }
+                            }}
+                          >
+                            {renderBody(displayedBody, documentBodyContentClassName)}
+                          </div>
+                        )
+                      )
                     )}
                   </div>
                   <div className="flex min-h-4 items-center justify-end px-1">

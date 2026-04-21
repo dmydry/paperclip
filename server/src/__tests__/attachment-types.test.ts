@@ -87,6 +87,11 @@ describe("matchesContentType", () => {
     expect(matchesContentType("application/zip", patterns)).toBe(false);
   });
 
+  it("includes zip attachments in the default allow-list", () => {
+    expect(matchesContentType("application/zip", [...DEFAULT_ALLOWED_TYPES])).toBe(true);
+    expect(matchesContentType("application/x-zip-compressed", [...DEFAULT_ALLOWED_TYPES])).toBe(true);
+  });
+
   it("handles plain * as allow-all wildcard", () => {
     const patterns = ["*"];
     expect(matchesContentType("image/png", patterns)).toBe(true);
