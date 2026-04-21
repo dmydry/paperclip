@@ -12,6 +12,7 @@ import {
   createDb,
   documentRevisions,
   documents,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
@@ -232,6 +233,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(documentRevisions);
     await db.delete(documents);
     await db.delete(issues);
+    await db.delete(goals);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
@@ -905,6 +907,49 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     if (retryRun) {
       await waitForRunToSettle(heartbeat, retryRun.id);
     }
+  });
+
+  it("does not continuation-requeue sprint standing containers between heartbeats", async () => {
+    const { agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "succeeded",
+      retryReason: "issue_continuation_needed",
+    });
+    const goalId = randomUUID();
+    const seededIssue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(seededIssue).toBeTruthy();
+    await db.insert(goals).values({
+      id: goalId,
+      companyId: seededIssue!.companyId,
+      title: "Sprint 09",
+      level: "goal",
+      status: "active",
+    });
+    await db
+      .update(issues)
+      .set({
+        title: "Standing [Sprint 09]: maintain BaliBikeHouse cross-functional sprint backlog and sequencing",
+        goalId,
+        projectId: null,
+      })
+      .where(eq(issues.id, issueId));
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(result.dispatchRequeued).toBe(0);
+    expect(result.continuationRequeued).toBe(0);
+    expect(result.escalated).toBe(0);
+    expect(result.skipped).toBe(1);
+
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(issue?.status).toBe("in_progress");
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).toBe(runId);
   });
 
   it("does not reconcile user-assigned work through the agent stranded-work recovery path", async () => {

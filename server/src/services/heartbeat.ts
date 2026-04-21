@@ -1039,6 +1039,16 @@ function formatCount(value: number | null | undefined) {
   return value.toLocaleString("en-US");
 }
 
+function isSprintStandingIssueContainer(issue: typeof issues.$inferSelect) {
+  const title = typeof issue.title === "string" ? issue.title.trim() : "";
+  return (
+    issue.status === "in_progress" &&
+    issue.projectId == null &&
+    issue.goalId != null &&
+    /^Standing \[Sprint [^\]]+\]:\s+/i.test(title)
+  );
+}
+
 export function parseSessionCompactionPolicy(agent: typeof agents.$inferSelect): SessionCompactionPolicy {
   return resolveSessionCompactionPolicy(agent.adapterType, agent.runtimeConfig).policy;
 }
@@ -3977,6 +3987,14 @@ export function heartbeatService(db: Db) {
       }
 
       if (await hasActiveExecutionPath(issue.companyId, issue.id)) {
+        result.skipped += 1;
+        continue;
+      }
+
+      // Sprint-scoped standing containers intentionally stay in_progress between
+      // low-frequency/manual wakes. They are not stranded execution slices and
+      // should not be auto-resumed by continuation recovery.
+      if (isSprintStandingIssueContainer(issue)) {
         result.skipped += 1;
         continue;
       }
