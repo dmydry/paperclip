@@ -434,6 +434,54 @@ describe("IssuesList", () => {
     });
   });
 
+  it("does not hide status groups behind the first-paint row cap", async () => {
+    localStorage.setItem(
+      "paperclip:test-issues:company-1",
+      JSON.stringify({ groupBy: "status", sortField: "updated", sortDir: "desc" }),
+    );
+
+    const doneIssues = Array.from({ length: 200 }, (_, index) =>
+      createIssue({
+        id: `issue-done-${index + 1}`,
+        identifier: `PAP-DONE-${index + 1}`,
+        title: `Done ${index + 1}`,
+        status: "done",
+        updatedAt: new Date(`2026-04-20T12:${String(index % 60).padStart(2, "0")}:00.000Z`),
+      }),
+    );
+    const todoIssues = Array.from({ length: 20 }, (_, index) =>
+      createIssue({
+        id: `issue-todo-${index + 1}`,
+        identifier: `PAP-TODO-${index + 1}`,
+        title: `Todo ${index + 1}`,
+        status: "todo",
+        updatedAt: new Date(`2026-04-01T12:${String(index % 60).padStart(2, "0")}:00.000Z`),
+      }),
+    );
+
+    const { root } = renderWithQueryClient(
+      <IssuesList
+        issues={[...doneIssues, ...todoIssues]}
+        agents={[]}
+        projects={[]}
+        viewStateKey="paperclip:test-issues"
+        onUpdateIssue={() => undefined}
+      />,
+      container,
+    );
+
+    await waitForAssertion(() => {
+      expect(container.querySelectorAll('[data-testid="issue-row"]')).toHaveLength(220);
+      expect(container.textContent).toContain("Todo");
+      expect(container.textContent).toContain("Todo 20");
+      expect(container.textContent).not.toContain("Rendering 150 of 220 issues");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("skips deferred row sizing for expanded parent rows with visible children", async () => {
     const parentIssue = createIssue({
       id: "issue-parent",

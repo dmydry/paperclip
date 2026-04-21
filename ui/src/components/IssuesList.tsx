@@ -642,13 +642,18 @@ export function IssuesList({
     }));
   }, [filtered, viewState.groupBy, agents, agentName, currentUserId, workspaceNameMap, issueTitleMap, companyUserLabelMap]);
 
-  useEffect(() => {
-    if (viewState.viewMode !== "list") return;
-    setRenderedIssueRowLimit(Math.min(filtered.length, INITIAL_ISSUE_ROW_RENDER_LIMIT));
-  }, [filtered, viewState.viewMode]);
+  const shouldCapRenderedRows = viewState.viewMode === "list" && viewState.groupBy === "none";
 
   useEffect(() => {
-    if (viewState.viewMode !== "list") return;
+    if (!shouldCapRenderedRows) {
+      setRenderedIssueRowLimit(filtered.length);
+      return;
+    }
+    setRenderedIssueRowLimit(Math.min(filtered.length, INITIAL_ISSUE_ROW_RENDER_LIMIT));
+  }, [filtered, shouldCapRenderedRows]);
+
+  useEffect(() => {
+    if (!shouldCapRenderedRows) return;
     if (renderedIssueRowLimit >= filtered.length) return;
 
     const timeoutId = window.setTimeout(() => {
@@ -658,9 +663,11 @@ export function IssuesList({
     }, ISSUE_ROW_RENDER_BATCH_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [filtered.length, renderedIssueRowLimit, viewState.viewMode]);
+  }, [filtered.length, renderedIssueRowLimit, shouldCapRenderedRows]);
 
-  const remainingIssueRowCount = Math.max(filtered.length - renderedIssueRowLimit, 0);
+  const remainingIssueRowCount = shouldCapRenderedRows
+    ? Math.max(filtered.length - renderedIssueRowLimit, 0)
+    : 0;
 
   const newIssueDefaults = useCallback((groupKey?: string) => {
     const defaults: Record<string, unknown> = { ...(baseCreateIssueDefaults ?? {}) };
@@ -711,7 +718,7 @@ export function IssuesList({
     setAssigneeSearch("");
   }, [onUpdateIssue]);
 
-  let remainingRowsToRender = viewState.viewMode === "list" ? renderedIssueRowLimit : Number.POSITIVE_INFINITY;
+  let remainingRowsToRender = shouldCapRenderedRows ? renderedIssueRowLimit : Number.POSITIVE_INFINITY;
 
   return (
     <div className="space-y-4">
