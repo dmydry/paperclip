@@ -155,22 +155,48 @@ Passed:
 - `pnpm install --frozen-lockfile`
 - `pnpm --filter @paperclipai/server typecheck`
 - `pnpm --filter @paperclipai/ui typecheck`
+- `pnpm --filter paperclipai typecheck`
 - `pnpm exec vitest run server/src/__tests__/heartbeat-process-recovery.test.ts`
 - `pnpm exec vitest run server/src/__tests__/workspace-runtime.test.ts server/src/__tests__/issue-comment-reopen-routes.test.ts server/src/__tests__/attachment-types.test.ts`
 - `pnpm exec vitest run ui/src/components/IssueDocumentsSection.test.tsx ui/src/components/NewIssueDialog.test.tsx ui/src/components/IssuesList.test.tsx`
 - `pnpm exec vitest run ui/src/pages/Issues.test.tsx`
+- `pnpm run test:run:general`
+- `node scripts/run-vitest-stable.mjs --mode serialized --shard-index 0 --shard-count 4`
+- `node scripts/run-vitest-stable.mjs --mode serialized --shard-index 1 --shard-count 4`
+- `node scripts/run-vitest-stable.mjs --mode serialized --shard-index 2 --shard-count 4`
+- `node scripts/run-vitest-stable.mjs --mode serialized --shard-index 3 --shard-count 4`
+- `pnpm run build`
 - `git diff --cached --check`
 
 Notes:
 
 - First heartbeat recovery run exposed test cleanup order after upstream successful-run handoff changes. Cleanup was fixed by deleting `documentRevisions`/`documents` again before company deletion; rerun passed.
 - First UI run exposed a page-size expectation mismatch. Test was updated to reflect the retained 1000 issue page size.
+- First full general run passed but leaked a `paperclipai run` child from `company-import-export-e2e`. The test harness now starts that server in its own process group and terminates the group; isolated rerun passed and left no temp processes.
+- Serialized shard 3 exposed stale `members-route-access` expectations. The route has required `users:manage_permissions` in both `dev` and `master`; the test now covers that contract.
+
+## Disposable smoke
+
+Passed on temp instance `/tmp/paperclip-update-smoke-osIFu6`:
+
+- Embedded Postgres startup with migrations applied.
+- `/api/health` returned `status: ok`, `deploymentMode: local_trusted`, `authReady: true`.
+- Static UI deep link served the app shell.
+- Created company, project, blocker issue, planning issue, and verified issue listing.
+- Verified first-class `blockedByIssueIds` relation on issue detail.
+- Upserted `plan` issue document.
+- Created and accepted `request_confirmation` thread interaction.
+- Uploaded a zip issue attachment.
+- Marked blocker done and verified relation status visibility.
+- Verified QA FAIL comment reopen path returns issue to `todo`.
+- Browser smoke with Playwright opened issue detail and issue list via prefix routes: `/UPD/issues/UPD-2` and `/UPD/issues`.
 
 ## Remaining risks before updating `dev`
 
-- Full suite not run yet. This update is large enough that full `pnpm test:run` or at least `test:run:general` + `test:run:serialized` should run before deploy.
-- DB migrations must be reviewed against the live Paper-01 database before applying. Pay attention to migration `0071_default_hire_approval_off.sql`.
-- Need a runtime smoke on a disposable dev server before restarting `paperclip.service`: login/access, issue list grouped and ungrouped, create issue with zip attachment, comment QA FAIL reopen flow, one heartbeat run, one recovery/status path.
+- Full general and serialized suites have passed in the review worktree.
+- DB migrations were reviewed statically and applied successfully on the disposable embedded Postgres smoke instance, but they have not been applied to live Paper-01 yet.
+- Live preflight still needs a real backup and migration-status check immediately before deploy.
+- Disposable smoke did not run a real agent heartbeat against a model adapter; that remains part of live/post-deploy agent smoke.
 - Need owner review before merging into `dev`, pushing, applying migrations, or restarting service.
 
 ## Rules to bake into the future skill

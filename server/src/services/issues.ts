@@ -425,6 +425,13 @@ function touchedByUserCondition(companyId: string, userId: string) {
           AND ${issueComments.companyId} = ${companyId}
           AND ${issueComments.authorUserId} = ${userId}
       )
+      OR EXISTS (
+        SELECT 1
+        FROM ${issueReadStates}
+        WHERE ${issueReadStates.issueId} = ${issues.id}
+          AND ${issueReadStates.companyId} = ${companyId}
+          AND ${issueReadStates.userId} = ${userId}
+      )
     )
   `;
 }
@@ -505,7 +512,9 @@ function myLastTouchAtExpr(companyId: string, userId: string) {
   return sql<Date | null>`
     GREATEST(
       COALESCE(${myLastCommentAt}, to_timestamp(0)),
-      COALESCE(${myLastReadAt}, to_timestamp(0))
+      COALESCE(${myLastReadAt}, to_timestamp(0)),
+      COALESCE(CASE WHEN ${issues.createdByUserId} = ${userId} THEN ${issues.createdAt} ELSE NULL END, to_timestamp(0)),
+      COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
     )
   `;
 }
@@ -587,11 +596,11 @@ function issueCanonicalLastActivityAtExpr(companyId: string) {
 }
 
 function unreadForUserCondition(companyId: string, userId: string) {
-  const participantCondition = inboxParticipantForUserCondition(companyId, userId);
+  const touchedCondition = touchedByUserCondition(companyId, userId);
   const myLastTouchAt = myLastTouchAtExpr(companyId, userId);
   return sql<boolean>`
     (
-      ${participantCondition}
+      ${touchedCondition}
       AND EXISTS (
         SELECT 1
         FROM ${issueComments}

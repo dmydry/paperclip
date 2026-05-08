@@ -187,13 +187,27 @@ function collectTextFiles(root: string, current: string, files: Record<string, s
 }
 
 async function stopServerProcess(child: ServerProcess | null) {
-  if (!child || child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  if (!child?.pid) return;
+
+  const killServerProcessGroup = (signal: NodeJS.Signals) => {
+    try {
+      process.kill(-child.pid!, signal);
+    } catch {
+      // The process group may already be gone.
+    }
+    if (child.exitCode === null) {
+      child.kill(signal);
+    }
+  };
+
+  killServerProcessGroup("SIGTERM");
+  if (child.exitCode !== null) return;
+
   await new Promise<void>((resolve) => {
     child.once("exit", () => resolve());
     setTimeout(() => {
       if (child.exitCode === null) {
-        child.kill("SIGKILL");
+        killServerProcessGroup("SIGKILL");
       }
     }, 5_000);
   });
@@ -300,6 +314,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       ["paperclipai", "run", "--config", configPath],
       {
         cwd: repoRoot,
+        detached: true,
         env: createServerEnv(configPath, port, tempDb.connectionString, {
           paperclipHome,
           instanceId: paperclipInstanceId,

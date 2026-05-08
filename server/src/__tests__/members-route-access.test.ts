@@ -24,6 +24,7 @@ vi.mock("../services/index.js", () => ({
   agentService: () => ({
     getById: vi.fn(),
   }),
+  boardAuthService: () => ({}),
   deduplicateAgentName: vi.fn(),
   logActivity: vi.fn(),
   notifyHireApproved: vi.fn(),
@@ -52,26 +53,13 @@ function createApp(actor: Record<string, unknown>) {
 describe("GET /companies/:companyId/members", () => {
   beforeEach(() => {
     mockAccessService.canUser.mockReset();
+    mockAccessService.getMembership.mockReset();
     mockAccessService.listMembers.mockReset();
     mockAccessService.setMemberPermissions.mockReset();
   });
 
-  it("allows a regular company user to read members without manage_permissions", async () => {
+  it("requires manage_permissions to read members", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
-    mockAccessService.listMembers.mockResolvedValue([
-      {
-        id: "member-1",
-        companyId: "company-1",
-        principalType: "user",
-        principalId: "user-2",
-        status: "active",
-        membershipRole: "member",
-        createdAt: new Date("2026-03-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-03-20T00:00:00.000Z"),
-        userName: "BikeHouse Management",
-        userEmail: "ops@example.com",
-      },
-    ]);
 
     const app = createApp({
       type: "board",
@@ -83,13 +71,9 @@ describe("GET /companies/:companyId/members", () => {
 
     const res = await request(app).get("/api/companies/company-1/members");
 
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0]).toMatchObject({
-      principalId: "user-2",
-      userName: "BikeHouse Management",
-    });
-    expect(mockAccessService.canUser).not.toHaveBeenCalled();
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Permission denied");
+    expect(mockAccessService.listMembers).not.toHaveBeenCalled();
   });
 
   it("still requires manage_permissions to update member permissions", async () => {

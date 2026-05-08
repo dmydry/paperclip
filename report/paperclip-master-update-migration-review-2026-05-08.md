@@ -116,9 +116,15 @@ Rollback posture:
 ## Pre-approval Checks Already Completed
 
 - `pnpm --filter @paperclipai/db run check:migrations`
+- Disposable embedded Postgres startup with migrations applied during smoke.
+- Full test/build matrix:
+  - `pnpm run test:run:general`
+  - serialized suite in four shards
+  - `pnpm run build`
+- Disposable API/UI smoke against temp instance `/tmp/paperclip-update-smoke-osIFu6`.
 
-Pending:
+Pending before live update:
 
-- disposable DB migration apply smoke
-- full test/build matrix
-- disposable UI/API smoke
+- live DB backup
+- live migration status check
+- owner approval for merge/push/restart

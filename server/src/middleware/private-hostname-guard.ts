@@ -1,7 +1,14 @@
 import type { Request, RequestHandler } from "express";
 
-function isLoopbackHostname(hostname: string): boolean {
+function normalizeHostname(hostname: string): string {
   const normalized = hostname.trim().toLowerCase();
+  return normalized.startsWith("[") && normalized.endsWith("]")
+    ? normalized.slice(1, -1)
+    : normalized;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = normalizeHostname(hostname);
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
@@ -21,7 +28,7 @@ function extractHostname(req: Request): string | null {
 function normalizeAllowedHostnames(values: string[]): string[] {
   const unique = new Set<string>();
   for (const value of values) {
-    const trimmed = value.trim().toLowerCase();
+    const trimmed = normalizeHostname(value);
     if (!trimmed) continue;
     unique.add(trimmed);
   }
@@ -30,7 +37,7 @@ function normalizeAllowedHostnames(values: string[]): string[] {
 
 export function resolvePrivateHostnameAllowSet(opts: { allowedHostnames: string[]; bindHost: string }): Set<string> {
   const configuredAllow = normalizeAllowedHostnames(opts.allowedHostnames);
-  const bindHost = opts.bindHost.trim().toLowerCase();
+  const bindHost = normalizeHostname(opts.bindHost);
   const allowSet = new Set<string>(configuredAllow);
 
   if (bindHost && bindHost !== "0.0.0.0") {
@@ -77,7 +84,7 @@ export function privateHostnameGuard(opts: {
       return;
     }
 
-    if (isLoopbackHostname(hostname) || allowSet.has(hostname)) {
+    if (isLoopbackHostname(hostname) || allowSet.has(normalizeHostname(hostname))) {
       next();
       return;
     }

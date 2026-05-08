@@ -16,7 +16,7 @@ function buildReq(host: string): Request {
   } as unknown as Request;
 }
 
-const uiDistDir = path.resolve("/Users/dmydry/projects/paperclip/ui/dist");
+const uiDistDir = path.resolve(process.cwd(), "ui/dist");
 let createdUiDist = false;
 let originalIndexHtml: string | null = null;
 
@@ -90,7 +90,7 @@ describe("static ui deep links", () => {
     });
 
     const inviteRes = await request(app).get("/invite/token-123");
-    expect(inviteRes.status).toBe(200);
+    expect(inviteRes.status, inviteRes.text).toBe(200);
     expect(inviteRes.headers["content-type"]).toContain("text/html");
     expect(inviteRes.text).toContain("paperclip-test-shell");
 

@@ -36,6 +36,12 @@ describe("privateHostnameGuard", () => {
     expect(res.status).toBe(200);
   });
 
+  it("allows bracketed IPv6 loopback hostnames", async () => {
+    const app = createApp({ enabled: true });
+    const res = await request(app).get("/api/health").set("Host", "[::1]:3100");
+    expect(res.status).toBe(200);
+  });
+
   it("allows explicitly configured hostnames", async () => {
     const app = createApp({ enabled: true, allowedHostnames: ["dotta-macbook-pro"] });
     const res = await request(app).get("/api/health").set("Host", "dotta-macbook-pro:3100");

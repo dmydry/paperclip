@@ -6,6 +6,13 @@ import { onboard } from "../commands/onboard.js";
 import type { PaperclipConfig } from "../config/schema.js";
 
 const ORIGINAL_ENV = { ...process.env };
+const tempDirs: string[] = [];
+
+function hideTailscaleBinaryFromPath() {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-no-tailscale-bin-"));
+  tempDirs.push(binDir);
+  process.env.PATH = binDir;
+}
 
 function createExistingConfigFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-onboard-"));
@@ -89,6 +96,10 @@ describe("onboard", () => {
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop();
+      if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("preserves an existing config when rerun without flags", async () => {
@@ -141,6 +152,7 @@ describe("onboard", () => {
   it("keeps tailnet quickstart on loopback until tailscale is available", async () => {
     const configPath = createFreshConfigPath();
     delete process.env.PAPERCLIP_TAILNET_BIND_HOST;
+    hideTailscaleBinaryFromPath();
 
     await onboard({ config: configPath, yes: true, invokedByRun: true, bind: "tailnet" });
 

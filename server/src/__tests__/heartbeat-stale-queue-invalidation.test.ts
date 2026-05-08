@@ -144,10 +144,22 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     await db.delete(documents);
     await db.delete(issueRelations);
     await db.delete(issueTreeHolds);
+    await db.delete(issueComments);
+    await db.delete(issueDocuments);
+    await db.delete(documentRevisions);
+    await db.delete(documents);
     await db.delete(issues);
     await db.delete(heartbeatRunEvents);
-    await db.delete(activityLog);
-    await db.delete(heartbeatRuns);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await db.delete(activityLog);
+      try {
+        await db.delete(heartbeatRuns);
+        break;
+      } catch (err) {
+        if (attempt === 4) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
     await db.delete(agents);
