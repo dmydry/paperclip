@@ -358,7 +358,6 @@ describe("agent issue mutation checkout ownership", () => {
   it.each([
     ["patch", (app: express.Express) => request(app).patch(`/api/issues/${issueId}`).send({ title: "Blocked" })],
     ["delete", (app: express.Express) => request(app).delete(`/api/issues/${issueId}`)],
-    ["comment", (app: express.Express) => request(app).post(`/api/issues/${issueId}/comments`).send({ body: "blocked" })],
     [
       "document upsert",
       (app: express.Express) =>
@@ -385,6 +384,27 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockWorkProductService.update).not.toHaveBeenCalled();
     expect(mockStorageService.putFile).not.toHaveBeenCalled();
     expect(mockStorageService.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it("allows peer agents to leave plain comments on another agent's active checkout", async () => {
+    const res = await request(await createApp(peerActor()))
+      .post(`/api/issues/${issueId}/comments`)
+      .send({ body: "Please recheck the QA failure before closing." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      issueId,
+      "Please recheck the QA failure before closing.",
+      expect.objectContaining({
+        agentId: peerAgentId,
+        runId: "66666666-6666-4666-8666-666666666666",
+      }),
+      expect.objectContaining({
+        authorType: "agent",
+      }),
+    );
   });
 
   it("allows the checked-out owner with the matching run id to patch and update documents", async () => {
@@ -439,7 +459,6 @@ describe("agent issue mutation checkout ownership", () => {
 
   it.each([
     ["todo", "patch", (app: express.Express) => request(app).patch(`/api/issues/${issueId}`).send({ title: "Todo update" })],
-    ["todo", "comment", (app: express.Express) => request(app).post(`/api/issues/${issueId}/comments`).send({ body: "Todo noise" })],
     ["blocked", "patch", (app: express.Express) => request(app).patch(`/api/issues/${issueId}`).send({ title: "Blocked update" })],
   ])("rejects peer agent %s issue %s mutations outside active checkout ownership", async (status, _kind, sendRequest) => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ status: status as "todo" | "blocked", assigneeAgentId: ownerAgentId }));

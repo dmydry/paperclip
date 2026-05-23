@@ -1093,6 +1093,29 @@ export function issueRoutes(
     return true;
   }
 
+  async function assertAgentIssueCommentAllowed(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string; status: string; assigneeAgentId: string | null },
+  ) {
+    if (req.actor.type !== "agent") return true;
+    const actorAgentId = req.actor.agentId;
+    if (!actorAgentId) {
+      res.status(403).json({ error: "Agent authentication required" });
+      return false;
+    }
+
+    // Comments are the cross-agent coordination surface. Keep issue mutations
+    // ownership-checked, but let same-company agents leave plain comments and
+    // mentions on another agent's issue. Explicit follow-up/reopen/interrupt
+    // requests are still mediated later by their dedicated guards.
+    if (issue.assigneeAgentId !== actorAgentId) {
+      return true;
+    }
+
+    return await assertAgentIssueMutationAllowed(req, res, issue);
+  }
+
   function assertStructuredCommentFieldsAllowed(
     req: Request,
     res: Response,
@@ -4141,7 +4164,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertAgentIssueCommentAllowed(req, res, issue))) return;
     if (!assertStructuredCommentFieldsAllowed(req, res, {
       presentation: req.body.presentation,
       metadata: req.body.metadata,
