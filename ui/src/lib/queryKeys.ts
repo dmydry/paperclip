@@ -38,6 +38,8 @@ export const queryKeys = {
     listMineByMe: (companyId: string) => ["issues", companyId, "mine-by-me"] as const,
     listTouchedByMe: (companyId: string) => ["issues", companyId, "touched-by-me"] as const,
     listUnreadTouchedByMe: (companyId: string) => ["issues", companyId, "unread-touched-by-me"] as const,
+    listBlockedAttention: (companyId: string) => ["issues", companyId, "blocked-attention"] as const,
+    countBlockedAttention: (companyId: string) => ["issues", companyId, "blocked-attention", "count"] as const,
     labels: (companyId: string) => ["issues", companyId, "labels"] as const,
     listByProject: (companyId: string, projectId: string) =>
       ["issues", companyId, "project", projectId] as const,
@@ -131,10 +133,14 @@ export const queryKeys = {
     schedulerHeartbeats: ["instance", "scheduler-heartbeats"] as const,
     experimentalSettings: ["instance", "experimental-settings"] as const,
   },
+  cloudUpstreams: (companyId: string) => ["cloud-upstreams", companyId] as const,
   health: ["health"] as const,
   secrets: {
     list: (companyId: string) => ["secrets", companyId] as const,
     providers: (companyId: string) => ["secret-providers", companyId] as const,
+    providerConfigs: (companyId: string) => ["secret-provider-configs", companyId] as const,
+    usage: (secretId: string) => ["secrets", "usage", secretId] as const,
+    accessEvents: (secretId: string) => ["secrets", "access-events", secretId] as const,
   },
   companySearch: {
     search: (companyId: string, q: string, scope: string, limit: number, offset: number) =>

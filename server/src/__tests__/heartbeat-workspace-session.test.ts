@@ -348,6 +348,18 @@ describe("shouldResetTaskSessionForWake", () => {
     ).toBe(true);
   });
 
+  it("resets session context for accepted planning confirmations that refresh workspace selection", () => {
+    expect(
+      shouldResetTaskSessionForWake({
+        wakeReason: "issue_commented",
+        interactionKind: "request_confirmation",
+        interactionStatus: "accepted",
+        forceFreshSession: true,
+        workspaceRefreshReason: "accepted_plan_confirmation",
+      }),
+    ).toBe(true);
+  });
+
   it("does not reset session context on mention wake comment", () => {
     expect(
       shouldResetTaskSessionForWake({
