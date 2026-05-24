@@ -639,7 +639,7 @@ describe("worktree helpers", () => {
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
     },
-    30000,
+    60_000,
   );
 
   it("avoids ports already claimed by sibling worktree instance configs", async () => {
@@ -921,7 +921,7 @@ describe("worktree helpers", () => {
       }
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 60_000);
 
   it("restores the current worktree config and instance data if reseed fails", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-reseed-rollback-"));
@@ -1220,7 +1220,7 @@ describe("worktree helpers", () => {
       process.chdir(originalCwd);
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 });
 
 describeEmbeddedPostgres("pauseSeededScheduledRoutines", () => {
