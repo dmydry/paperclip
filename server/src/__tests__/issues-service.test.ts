@@ -2284,6 +2284,117 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
     ]);
   });
 
+  it("createChild uses the target project workspace instead of inheriting parent workspace for cross-project children", async () => {
+    const companyId = randomUUID();
+    const parentProjectId = randomUUID();
+    const targetProjectId = randomUUID();
+    const goalId = randomUUID();
+    const parentIssueId = randomUUID();
+    const parentProjectWorkspaceId = randomUUID();
+    const parentExecutionWorkspaceId = randomUUID();
+    const targetProjectWorkspaceId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
+
+    await db.insert(goals).values({
+      id: goalId,
+      companyId,
+      title: "Cross-project handoff",
+      level: "task",
+      status: "active",
+    });
+
+    await db.insert(projects).values([
+      {
+        id: parentProjectId,
+        companyId,
+        goalId,
+        name: "Frontend",
+        status: "in_progress",
+      },
+      {
+        id: targetProjectId,
+        companyId,
+        goalId,
+        name: "Backend",
+        status: "in_progress",
+      },
+    ]);
+
+    await db.insert(projectWorkspaces).values([
+      {
+        id: parentProjectWorkspaceId,
+        companyId,
+        projectId: parentProjectId,
+        name: "Frontend workspace",
+        isPrimary: true,
+      },
+      {
+        id: targetProjectWorkspaceId,
+        companyId,
+        projectId: targetProjectId,
+        name: "Backend workspace",
+        isPrimary: true,
+      },
+    ]);
+
+    await db.insert(executionWorkspaces).values({
+      id: parentExecutionWorkspaceId,
+      companyId,
+      projectId: parentProjectId,
+      projectWorkspaceId: parentProjectWorkspaceId,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: "Frontend worktree",
+      status: "active",
+      providerType: "git_worktree",
+    });
+
+    await db.insert(issues).values({
+      id: parentIssueId,
+      companyId,
+      projectId: parentProjectId,
+      projectWorkspaceId: parentProjectWorkspaceId,
+      goalId,
+      title: "Frontend issue",
+      status: "blocked",
+      priority: "medium",
+      executionWorkspaceId: parentExecutionWorkspaceId,
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: {
+        mode: "isolated_workspace",
+      },
+    });
+
+    const { issue: child, parentBlockerAdded } = await svc.createChild(parentIssueId, {
+      projectId: targetProjectId,
+      title: "Backend follow-up",
+      status: "todo",
+      blockParentUntilDone: true,
+    });
+
+    expect(parentBlockerAdded).toBe(true);
+    expect(child.parentId).toBe(parentIssueId);
+    expect(child.projectId).toBe(targetProjectId);
+    expect(child.projectWorkspaceId).toBe(targetProjectWorkspaceId);
+    expect(child.executionWorkspaceId).toBeNull();
+    expect(child.executionWorkspacePreference).toBeNull();
+
+    const parentRelations = await svc.getRelationSummaries(parentIssueId);
+    expect(parentRelations.blockedBy).toEqual([
+      expect.objectContaining({
+        id: child.id,
+        title: "Backend follow-up",
+      }),
+    ]);
+  });
+
   it("clamps helper-created child requestDepth to the safe maximum", async () => {
     const companyId = randomUUID();
     const projectId = randomUUID();
