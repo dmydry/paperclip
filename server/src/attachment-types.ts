@@ -1,7 +1,7 @@
 /**
  * Shared attachment content-type configuration.
  *
- * By default a curated set of image/document/text types are allowed. Set the
+ * By default a curated set of image/document/text/media types are allowed. Set the
  * `PAPERCLIP_ALLOWED_ATTACHMENT_TYPES` environment variable to a
  * comma-separated list of MIME types or wildcard patterns to expand the
  * allowed set for routes that use this allowlist.
@@ -33,6 +33,9 @@ export const DEFAULT_ALLOWED_TYPES: readonly string[] = [
   "application/json",
   "text/csv",
   "text/html",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
 ];
 
 export const DEFAULT_ATTACHMENT_CONTENT_TYPE = "application/octet-stream";
@@ -44,6 +47,9 @@ export const INLINE_ATTACHMENT_TYPES: readonly string[] = [
   "text/markdown",
   "application/json",
   "text/csv",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
 ];
 
 /**

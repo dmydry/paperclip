@@ -69,6 +69,7 @@ export interface RealizedExecutionWorkspace extends ExecutionWorkspaceInput {
   worktreePath: string | null;
   warnings: string[];
   created: boolean;
+  baseRefSha?: string | null;
 }
 
 export interface RuntimeServiceRef {
@@ -541,10 +542,109 @@ export async function getGitWorktreeStatus(worktreePath: string): Promise<{
   };
 }
 
+function formatShortSha(value: string | null | undefined) {
+  return value ? value.slice(0, 12) : "unknown";
+}
+
 function gitErrorIncludes(error: unknown, needle: string) {
   const message = error instanceof Error ? error.message : String(error);
   return message.toLowerCase().includes(needle.toLowerCase());
 }
+
+function parseRemoteTrackingRef(ref: string): { remote: string; branch: string } | null {
+  const trimmed = ref.trim();
+  const refsRemotesPrefix = "refs/remotes/";
+  const normalized = trimmed.startsWith(refsRemotesPrefix)
+    ? trimmed.slice(refsRemotesPrefix.length)
+    : trimmed;
+  const slashIndex = normalized.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === normalized.length - 1) return null;
+  const remote = normalized.slice(0, slashIndex);
+  const branch = normalized.slice(slashIndex + 1);
+  if (!/^[A-Za-z0-9._-]+$/.test(remote)) return null;
+  return { remote, branch };
+}
+
+async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string): Promise<string[]> {
+  const remoteTracking = parseRemoteTrackingRef(baseRef);
+  if (!remoteTracking) return [];
+
+  const remoteExists = await runGit(["remote", "get-url", remoteTracking.remote], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  if (!remoteExists) return [];
+
+  try {
+    await runGit([
+      "fetch",
+      "--prune",
+      remoteTracking.remote,
+      `+refs/heads/${remoteTracking.branch}:refs/remotes/${remoteTracking.remote}/${remoteTracking.branch}`,
+    ], repoRoot);
+    return [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [`Could not refresh base ref ${baseRef} before preparing the execution workspace: ${message}`];
+  }
+}
+
+async function resolveBaseRefSha(repoRoot: string, baseRef: string): Promise<string | null> {
+  return await runGit(["rev-parse", "--verify", `${baseRef}^{commit}`], repoRoot).catch(() => null);
+}
+
+function readRecordedBaseRefSha(metadata: Record<string, unknown> | null | undefined): string | null {
+  const snapshot = parseObject(metadata?.baseRefSnapshot);
+  const resolvedSha = snapshot.resolvedSha;
+  return typeof resolvedSha === "string" && resolvedSha.trim().length > 0 ? resolvedSha.trim() : null;
+}
+
+export async function inspectExecutionWorkspaceBaseDrift(input: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string | null;
+  baseRef: string | null;
+  recordedBaseRefSha?: string | null;
+  skipRefresh?: boolean;
+}): Promise<{
+  warnings: string[];
+  currentBaseRefSha: string | null;
+  branchBaseRefSha: string | null;
+}> {
+  const baseRef = input.baseRef?.trim();
+  if (!baseRef) {
+    return { warnings: [], currentBaseRefSha: null, branchBaseRefSha: null };
+  }
+
+  const warnings = input.skipRefresh ? [] : await refreshRemoteTrackingBaseRef(input.repoRoot, baseRef);
+  const currentBaseRefSha = await resolveBaseRefSha(input.repoRoot, baseRef);
+  if (!currentBaseRefSha) {
+    warnings.push(`Could not resolve base ref ${baseRef} while checking execution workspace freshness.`);
+    return { warnings, currentBaseRefSha: null, branchBaseRefSha: null };
+  }
+
+  const branchBaseRefSha = await runGit(["merge-base", "HEAD", baseRef], input.worktreePath).catch(() => null);
+  if (!branchBaseRefSha) {
+    warnings.push(`Could not compare execution workspace ${input.branchName ?? "branch"} against base ref ${baseRef}.`);
+    return { warnings, currentBaseRefSha, branchBaseRefSha: null };
+  }
+
+  if (branchBaseRefSha !== currentBaseRefSha) {
+    const behindCountRaw = await runGit(["rev-list", "--count", `HEAD..${baseRef}`], input.worktreePath).catch(() => "");
+    const behindCount = Number.parseInt(behindCountRaw, 10);
+    const behindText = Number.isFinite(behindCount) && behindCount > 0
+      ? `${behindCount} commit${behindCount === 1 ? "" : "s"}`
+      : "newer commits";
+    const recordedText = input.recordedBaseRefSha
+      ? `recorded base ${formatShortSha(input.recordedBaseRefSha)}`
+      : `merge-base ${formatShortSha(branchBaseRefSha)}`;
+    warnings.push(
+      `Execution workspace branch ${input.branchName ? `"${input.branchName}"` : "HEAD"} is behind ${baseRef} by ${behindText}: ${recordedText}, current base ${formatShortSha(currentBaseRefSha)}. Refresh or rebase the workspace before relying on recent base-branch fixes.`,
+    );
+  }
+
+  return { warnings, currentBaseRefSha, branchBaseRefSha };
+}
+
 
 type GitWorktreeListEntry = {
   worktree: string;
@@ -608,22 +708,31 @@ async function isGitCheckout(cwd: string): Promise<boolean> {
 }
 
 async function detectDefaultBranch(repoRoot: string): Promise<string | null> {
+  const originMasterRef = "origin/master";
+  await refreshRemoteTrackingBaseRef(repoRoot, originMasterRef);
+  if (await resolveBaseRefSha(repoRoot, originMasterRef)) {
+    return originMasterRef;
+  }
+
   // Try the explicit remote HEAD first (set by git clone or git remote set-head)
   try {
     const remoteHead = await runGit(
       ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
       repoRoot,
     );
-    const branch = remoteHead?.startsWith("origin/") ? remoteHead.slice("origin/".length) : remoteHead;
-    if (branch) return branch;
+    if (remoteHead) {
+      await refreshRemoteTrackingBaseRef(repoRoot, remoteHead);
+      if (await resolveBaseRefSha(repoRoot, remoteHead)) return remoteHead;
+    }
   } catch {
     // Not set — fall through to heuristic
   }
 
   // Fallback: check for common default branch names on the remote
-  for (const candidate of ["main", "master"]) {
+  for (const candidate of ["origin/master", "origin/main", "main", "master"]) {
     try {
-      await runGit(["rev-parse", "--verify", `refs/remotes/origin/${candidate}`], repoRoot);
+      await refreshRemoteTrackingBaseRef(repoRoot, candidate);
+      await runGit(["rev-parse", "--verify", `${candidate}^{commit}`], repoRoot);
       return candidate;
     } catch {
       // Not found — try next
@@ -635,36 +744,6 @@ async function detectDefaultBranch(repoRoot: string): Promise<string | null> {
 
 async function directoryExists(value: string) {
   return fs.stat(value).then((stats) => stats.isDirectory()).catch(() => false);
-}
-
-function parseRemoteTrackingRef(value: string): { remote: string; branch: string } | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.startsWith("refs/remotes/") ? trimmed.slice("refs/remotes/".length) : trimmed;
-  const firstSlash = normalized.indexOf("/");
-  if (firstSlash <= 0 || firstSlash === normalized.length - 1) return null;
-  const remote = normalized.slice(0, firstSlash).trim();
-  const branch = normalized.slice(firstSlash + 1).trim();
-  if (!remote || !branch) return null;
-  return { remote, branch };
-}
-
-async function hasGitRemote(repoRoot: string, remoteName: string) {
-  const stdout = await runGit(["remote"], repoRoot);
-  return stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .includes(remoteName);
-}
-
-async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string) {
-  const parsed = parseRemoteTrackingRef(baseRef);
-  if (!parsed) return;
-  if (!(await hasGitRemote(repoRoot, parsed.remote))) return;
-  const remoteBranchRef = `refs/heads/${parsed.branch}`;
-  const localTrackingRef = `refs/remotes/${parsed.remote}/${parsed.branch}`;
-  await runGit(["fetch", "--prune", parsed.remote, `+${remoteBranchRef}:${localTrackingRef}`], repoRoot);
 }
 
 async function syncExistingWorktreeToBaseRef(input: {
@@ -1102,6 +1181,7 @@ export async function realizeExecutionWorkspace(input: {
       worktreePath: null,
       warnings: [],
       created: false,
+      baseRefSha: null,
     };
   }
 
@@ -1128,6 +1208,8 @@ export async function realizeExecutionWorkspace(input: {
   const reuseSyncStrategy = rawStrategy.reuseSyncStrategy === "rebase" || rawStrategy.reuseSyncStrategy === "reset_hard"
     ? (rawStrategy.reuseSyncStrategy as WorktreeReuseSyncStrategy)
     : null;
+  const baseRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
+  const currentBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
 
   await fs.mkdir(worktreeParentDir, { recursive: true });
 
@@ -1142,6 +1224,14 @@ export async function realizeExecutionWorkspace(input: {
         recorder: input.recorder ?? null,
       });
     }
+    const baseDrift = await inspectExecutionWorkspaceBaseDrift({
+      repoRoot,
+      worktreePath: reusablePath,
+      branchName,
+      baseRef,
+      recordedBaseRefSha: null,
+      skipRefresh: true,
+    });
     if (input.recorder) {
       await input.recorder.recordOperation({
         phase: "worktree_prepare",
@@ -1151,6 +1241,8 @@ export async function realizeExecutionWorkspace(input: {
           worktreePath: reusablePath,
           branchName,
           baseRef,
+          currentBaseRefSha: baseDrift.currentBaseRefSha,
+          branchBaseRefSha: baseDrift.branchBaseRefSha,
           created: false,
           reused: true,
         },
@@ -1178,8 +1270,9 @@ export async function realizeExecutionWorkspace(input: {
       cwd: reusablePath,
       branchName,
       worktreePath: reusablePath,
-      warnings: [],
+      warnings: [...baseRefreshWarnings, ...baseDrift.warnings],
       created: false,
+      baseRefSha: baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha,
     };
   }
 
@@ -1222,6 +1315,7 @@ export async function realizeExecutionWorkspace(input: {
         worktreePath,
         branchName,
         baseRef,
+        baseRefSha: currentBaseRefSha,
         created: true,
       },
       successMessage: `Created git worktree at ${worktreePath}\n`,
@@ -1241,6 +1335,7 @@ export async function realizeExecutionWorkspace(input: {
           worktreePath,
           branchName,
           baseRef,
+          baseRefSha: currentBaseRefSha,
           created: false,
           reusedExistingBranch: true,
         },
@@ -1276,8 +1371,9 @@ export async function realizeExecutionWorkspace(input: {
     cwd: worktreePath,
     branchName,
     worktreePath,
-    warnings: [],
+    warnings: baseRefreshWarnings,
     created: true,
+    baseRefSha: currentBaseRefSha,
   };
 }
 
@@ -1293,6 +1389,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     repoUrl: string | null | undefined;
     baseRef: string | null | undefined;
     branchName: string | null | undefined;
+    metadata?: Record<string, unknown> | null;
     config?: {
       provisionCommand?: string | null;
     } | null;
@@ -1318,15 +1415,26 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     worktreePath: strategy === "git_worktree" ? (input.workspace.providerRef ?? cwd) : null,
     warnings: [],
     created: false,
+    baseRefSha: readRecordedBaseRefSha(input.workspace.metadata),
   };
   const provisionCommand = asString(input.workspace.config?.provisionCommand, "").trim();
 
   if (strategy !== "git_worktree") {
     return realized;
   }
+  const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
+  const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
   if (await directoryExists(cwd)) {
+    const baseDrift = await inspectExecutionWorkspaceBaseDrift({
+      repoRoot,
+      worktreePath: realized.worktreePath ?? cwd,
+      branchName: realized.branchName,
+      baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+      recordedBaseRefSha,
+    });
+    realized.warnings = baseDrift.warnings;
+    realized.baseRefSha = recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     if (provisionCommand) {
-      const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
       await provisionExecutionWorktree({
         strategy: {
           type: "git_worktree",
@@ -1345,7 +1453,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     return realized;
   }
 
-  const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
   const worktreePath = realized.worktreePath ?? cwd;
   const branchName = asString(input.workspace.branchName, "").trim();
   if (!branchName) {
@@ -1354,6 +1461,9 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
 
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   await runGit(["worktree", "prune"], repoRoot).catch(() => {});
+  const restoreBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
+  const restoreRefreshWarnings = restoreBaseRef ? await refreshRemoteTrackingBaseRef(repoRoot, restoreBaseRef) : [];
+  const restoreCurrentBaseRefSha = restoreBaseRef ? await resolveBaseRefSha(repoRoot, restoreBaseRef) : null;
 
   let created = false;
   try {
@@ -1366,6 +1476,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
         worktreePath,
         branchName,
         baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+        currentBaseRefSha: restoreCurrentBaseRefSha,
         created: false,
         restored: true,
       },
@@ -1381,6 +1492,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
       throw error;
     }
     const baseRef = input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
+    const recreatedBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
     await recordGitOperation(input.recorder, {
       phase: "worktree_prepare",
       args: ["worktree", "add", "-b", branchName, worktreePath, baseRef],
@@ -1390,6 +1502,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
         worktreePath,
         branchName,
         baseRef,
+        baseRefSha: recreatedBaseRefSha,
         created: true,
         restored: true,
       },
@@ -1398,6 +1511,15 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     });
     created = true;
   }
+
+  const baseDrift = await inspectExecutionWorkspaceBaseDrift({
+    repoRoot,
+    worktreePath,
+    branchName,
+    baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+    recordedBaseRefSha,
+    skipRefresh: true,
+  });
 
   await provisionExecutionWorktree({
     strategy: {
@@ -1418,7 +1540,12 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     ...realized,
     cwd: worktreePath,
     worktreePath,
+    warnings: [...restoreRefreshWarnings, ...baseDrift.warnings],
     created,
+    baseRefSha:
+      recordedBaseRefSha
+      ?? (created ? restoreCurrentBaseRefSha : baseDrift.branchBaseRefSha)
+      ?? baseDrift.currentBaseRefSha,
   };
 }
 
