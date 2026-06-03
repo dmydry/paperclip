@@ -685,6 +685,7 @@ function queueResolvedInteractionContinuationWakeup(input: {
     continuationPolicy: string;
     sourceCommentId?: string | null;
     sourceRunId?: string | null;
+    result?: unknown;
   };
   actor: { actorType: "user" | "agent"; actorId: string };
   source: string;
@@ -695,19 +696,27 @@ function queueResolvedInteractionContinuationWakeup(input: {
     input.interaction.continuationPolicy !== "wake_assignee"
     && input.interaction.continuationPolicy !== "wake_assignee_on_accept"
   ) return;
+  const staleTargetRepair = isStaleTargetRequestConfirmation(input.interaction);
   if (
     input.interaction.continuationPolicy === "wake_assignee_on_accept"
     && input.interaction.status !== "accepted"
+    && !staleTargetRepair
   ) return;
-  if (input.interaction.status === "expired") return;
+  if (input.interaction.status === "expired" && !staleTargetRepair) return;
   if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return;
 
-  const forceFreshSession = input.forceFreshSession === true;
-  const workspaceRefreshReason = readNonEmptyString(input.workspaceRefreshReason);
+  const forceFreshSession = input.forceFreshSession === true || staleTargetRepair;
+  const workspaceRefreshReason = readNonEmptyString(input.workspaceRefreshReason)
+    ?? (staleTargetRepair ? "stale_request_confirmation_repair" : null);
+  const wakeReason = staleTargetRepair ? "issue_interaction_stale_target" : "issue_commented";
+  const mutation = staleTargetRepair ? "interaction_stale_target" : "interaction";
   void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
     source: "automation",
     triggerDetail: "system",
-    reason: "issue_commented",
+    reason: wakeReason,
+    idempotencyKey: staleTargetRepair
+      ? `issue-interaction-stale-target:${input.issue.id}:${input.interaction.id}`
+      : null,
     payload: {
       issueId: input.issue.id,
       interactionId: input.interaction.id,
@@ -715,7 +724,7 @@ function queueResolvedInteractionContinuationWakeup(input: {
       interactionStatus: input.interaction.status,
       sourceCommentId: input.interaction.sourceCommentId ?? null,
       sourceRunId: input.interaction.sourceRunId ?? null,
-      mutation: "interaction",
+      mutation,
     },
     requestedByActorType: input.actor.actorType,
     requestedByActorId: input.actor.actorId,
@@ -727,8 +736,9 @@ function queueResolvedInteractionContinuationWakeup(input: {
       interactionStatus: input.interaction.status,
       sourceCommentId: input.interaction.sourceCommentId ?? null,
       sourceRunId: input.interaction.sourceRunId ?? null,
-      wakeReason: "issue_commented",
+      wakeReason,
       source: input.source,
+      ...(staleTargetRepair ? { interactionResultOutcome: "stale_target" } : {}),
       ...(forceFreshSession ? { forceFreshSession: true } : {}),
       ...(workspaceRefreshReason ? { workspaceRefreshReason } : {}),
     },
@@ -738,6 +748,18 @@ function queueResolvedInteractionContinuationWakeup(input: {
     interactionId: input.interaction.id,
     agentId: input.issue.assigneeAgentId,
   }, "failed to wake assignee on issue interaction resolution"));
+}
+
+function isStaleTargetRequestConfirmation(interaction: {
+  kind: string;
+  status: string;
+  result?: unknown;
+}) {
+  if (interaction.kind !== "request_confirmation") return false;
+  if (interaction.status !== "expired") return false;
+  const result = interaction.result;
+  if (!result || typeof result !== "object") return false;
+  return readNonEmptyString((result as Record<string, unknown>).outcome) === "stale_target";
 }
 
 function diffExecutionParticipants(
@@ -1335,8 +1357,16 @@ export function issueRoutes(
   }
 
   async function logExpiredRequestConfirmations(input: {
-    issue: { id: string; companyId: string; identifier?: string | null };
-    interactions: Array<{ id: string; kind: string; status: string; result?: unknown }>;
+    issue: { id: string; companyId: string; identifier?: string | null; assigneeAgentId?: string | null; status?: string | null };
+    interactions: Array<{
+      id: string;
+      kind: string;
+      status: string;
+      continuationPolicy?: string | null;
+      sourceCommentId?: string | null;
+      sourceRunId?: string | null;
+      result?: unknown;
+    }>;
     actor: ReturnType<typeof getActorInfo>;
     source: string;
   }) {
@@ -1358,6 +1388,25 @@ export function issueRoutes(
           source: input.source,
           result: interaction.result ?? null,
         },
+      });
+      queueResolvedInteractionContinuationWakeup({
+        heartbeat,
+        issue: {
+          id: input.issue.id,
+          assigneeAgentId: input.issue.assigneeAgentId ?? null,
+          status: input.issue.status ?? "todo",
+        },
+        interaction: {
+          id: interaction.id,
+          kind: interaction.kind,
+          status: interaction.status,
+          continuationPolicy: interaction.continuationPolicy ?? "none",
+          sourceCommentId: interaction.sourceCommentId ?? null,
+          sourceRunId: interaction.sourceRunId ?? null,
+          result: interaction.result,
+        },
+        actor: input.actor,
+        source: input.source,
       });
     }
   }

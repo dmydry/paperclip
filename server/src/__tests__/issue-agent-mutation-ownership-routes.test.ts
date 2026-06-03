@@ -711,6 +711,96 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalled();
   });
 
+  it("wakes the assignee to repair stale plan confirmations after document updates", async () => {
+    const app = await createApp(boardActor());
+    const interactionId = "99999999-9999-4999-8999-999999999998";
+
+    mockDocumentService.upsertIssueDocument.mockResolvedValueOnce({
+      created: false,
+      document: {
+        id: "document-1",
+        key: "plan",
+        title: "Plan",
+        format: "markdown",
+        body: "# updated",
+        latestRevisionId: "revision-2",
+        latestRevisionNumber: 2,
+      },
+    });
+    mockIssueThreadInteractionService.expireStaleRequestConfirmationsForIssueDocument.mockResolvedValueOnce([
+      {
+        id: interactionId,
+        companyId,
+        issueId,
+        kind: "request_confirmation",
+        status: "expired",
+        continuationPolicy: "wake_assignee",
+        idempotencyKey: `confirmation:${issueId}:plan:revision-1`,
+        sourceCommentId: null,
+        sourceRunId: ownerRunId,
+        payload: {
+          version: 1,
+          prompt: "Approve the plan?",
+          target: {
+            type: "issue_document",
+            issueId,
+            documentId: "document-1",
+            key: "plan",
+            revisionId: "revision-2",
+            revisionNumber: 2,
+          },
+        },
+        result: {
+          version: 1,
+          outcome: "stale_target",
+          staleTarget: {
+            type: "issue_document",
+            issueId,
+            documentId: "document-1",
+            key: "plan",
+            revisionId: "revision-1",
+            revisionNumber: 1,
+          },
+        },
+      },
+    ]);
+
+    await request(app)
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# updated" })
+      .expect(200);
+
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ownerAgentId,
+      expect.objectContaining({
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_interaction_stale_target",
+        idempotencyKey: `issue-interaction-stale-target:${issueId}:${interactionId}`,
+        payload: expect.objectContaining({
+          issueId,
+          interactionId,
+          interactionKind: "request_confirmation",
+          interactionStatus: "expired",
+          mutation: "interaction_stale_target",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId,
+          taskId: issueId,
+          interactionId,
+          interactionKind: "request_confirmation",
+          interactionStatus: "expired",
+          wakeReason: "issue_interaction_stale_target",
+          source: "issue.document_updated",
+          interactionResultOutcome: "stale_target",
+          forceFreshSession: true,
+          workspaceRefreshReason: "stale_request_confirmation_repair",
+        }),
+      }),
+    );
+  });
+
   it("allows agents with the active-checkout management grant to mutate active checkouts", async () => {
     mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
       allowed: input.action === "tasks:manage_active_checkouts",
