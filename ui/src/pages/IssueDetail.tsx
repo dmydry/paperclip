@@ -655,6 +655,8 @@ type IssueDetailChatTabProps = {
   composerDisabledReason: string | null;
   composerHint: string | null;
   queuedCommentReason: "hold" | "active_run" | "other";
+  pendingApprovalAction: { approvalId: string; action: "approve" | "reject" } | null;
+  onApprovalAction: (approvalId: string, action: "approve" | "reject") => void;
   onVote: (
     commentId: string,
     vote: "up" | "down",
@@ -724,6 +726,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   composerDisabledReason,
   composerHint,
   queuedCommentReason,
+  pendingApprovalAction,
+  onApprovalAction,
   onVote,
   onAdd,
   onImageUpload,
@@ -772,6 +776,11 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     queryFn: () => activityApi.runsForIssue(issueId),
     refetchInterval: hasLiveRuns ? 5000 : false,
     placeholderData: keepPreviousDataForSameQueryTail<RunForIssue[]>(issueId),
+  });
+  const { data: linkedApprovals } = useQuery({
+    queryKey: queryKeys.issues.approvals(issueId),
+    queryFn: () => issuesApi.listApprovals(issueId),
+    placeholderData: keepPreviousDataForSameQueryTail<Awaited<ReturnType<typeof issuesApi.listApprovals>>>(issueId),
   });
   const resolvedActivity = activity ?? [];
   const resolvedLinkedRuns = linkedRuns ?? [];
@@ -890,6 +899,26 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           >
             {commentsLoadingOlder ? "Loading earlier comments..." : "Load earlier comments"}
           </Button>
+        </div>
+      ) : null}
+      {linkedApprovals && linkedApprovals.length > 0 ? (
+        <div className="space-y-3">
+          {linkedApprovals.map((approval) => (
+            <ApprovalCard
+              key={approval.id}
+              approval={approval}
+              requesterAgent={approval.requestedByAgentId ? agentMap.get(approval.requestedByAgentId) ?? null : null}
+              onApprove={() => onApprovalAction(approval.id, "approve")}
+              onReject={() => onApprovalAction(approval.id, "reject")}
+              detailLink={`/approvals/${approval.id}`}
+              isPending={pendingApprovalAction?.approvalId === approval.id}
+              pendingAction={
+                pendingApprovalAction?.approvalId === approval.id
+                  ? pendingApprovalAction.action
+                  : null
+              }
+            />
+          ))}
         </div>
       ) : null}
       <IssueChatThread
@@ -3986,6 +4015,10 @@ export function IssueDetail() {
               composerDisabledReason={commentComposerDisabledReason}
               composerHint={composerHint}
               queuedCommentReason={queuedCommentReason}
+              pendingApprovalAction={pendingApprovalAction}
+              onApprovalAction={(approvalId, action) => {
+                approvalDecision.mutate({ approvalId, action });
+              }}
               onVote={handleCommentVote}
               onAdd={handleChatAdd}
               onImageUpload={handleCommentImageUpload}
