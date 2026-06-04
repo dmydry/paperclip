@@ -1134,6 +1134,40 @@ export function agentRoutes(
     await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
   }
 
+  async function assertCanWriteManagedInstructionsFile(
+    req: Request,
+    targetAgent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
+    relativePath: string,
+  ) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") {
+      await assertCanManageInstructionsPath(req, targetAgent);
+      return;
+    }
+    if (req.actor.type !== "agent" || !req.actor.agentId) {
+      throw forbidden("Agent authentication required");
+    }
+    if (relativePath.trim() === "promptTemplate.legacy.md") {
+      throw forbidden("Agent-authenticated callers can only write managed instructions bundle files");
+    }
+
+    const decision = await access.decide({
+      actor: req.actor,
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
+    });
+    if (!decision.allowed) {
+      throw forbidden(decision.explanation);
+    }
+
+    const bundle = await instructions.getBundle(targetAgent);
+    const managedRootPath = path.resolve(bundle.managedRootPath);
+    const rootPath = bundle.rootPath ? path.resolve(bundle.rootPath) : null;
+    if (bundle.mode === "external" || (rootPath && rootPath !== managedRootPath)) {
+      throw forbidden("Agent-authenticated callers can only write managed instructions bundle files");
+    }
+  }
+
   function assertNoAgentInstructionsConfigMutation(
     req: Request,
     adapterConfig: Record<string, unknown> | null | undefined,
@@ -2466,7 +2500,7 @@ export function agentRoutes(
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    await assertCanManageInstructionsPath(req, existing);
+    await assertCanWriteManagedInstructionsFile(req, existing, req.body.path);
 
     const actor = getActorInfo(req);
     const result = await instructions.writeFile(existing, req.body.path, req.body.content, {

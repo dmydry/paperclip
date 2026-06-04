@@ -871,6 +871,7 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/agents/agent-1/skills" },
       { method: "POST", path: "/api/agents/agent-1/skills/sync" },
       { method: "PATCH", path: "/api/agents/agent-1/instructions-path" },
+      { method: "PUT", path: "/api/agents/agent-1/instructions-bundle/file" },
       { method: "GET", path: "/api/companies/co-1" },
       { method: "GET", path: "/api/companies/co-1/dashboard" },
       { method: "GET", path: "/api/companies/co-1/agents" },
