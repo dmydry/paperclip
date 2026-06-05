@@ -21,6 +21,27 @@ Some adapters also inject `PAPERCLIP_WAKE_PAYLOAD_JSON` on comment-driven wakes.
 
 Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-id>` to install Paperclip skills for Claude/Codex and print/export the required `PAPERCLIP_*` environment variables for that agent identity.
 
+Operator shell fast path outside heartbeat runs:
+
+- If you are on Paper-01 in an owner/operator shell and `PAPERCLIP_API_KEY` is
+  missing, do not jump to direct database reads. Prefer the configured
+  `paperclip-api` wrapper for board-token API access:
+  `paperclip-api GET /api/cli-auth/me`, `paperclip-api GET /api/companies`,
+  `paperclip-api GET /api/issues/{issueId}`.
+- If a local helper still expects `PAPERCLIP_API_URL` and `PAPERCLIP_API_KEY`,
+  run it through `paperclip-api-env <helper-command> ...` or use a patched
+  helper that auto-bootstraps through that wrapper. This exports the board
+  token only to the child process; do not add it to shell rc files or logs.
+- When a Paperclip MCP generic request tool is available, use it for
+  board/operator API reads. Its path is relative to the API root, so use
+  `/companies` rather than `/api/companies`.
+- MCP shortcuts such as `/agents/me` or inbox-lite are agent-token routes and
+  may return `401 Agent authentication required` under a board token. Treat that
+  as an auth-mode mismatch, not an API outage.
+- Never print, path-hunt, or document token/auth-store locations. The wrapper
+  owns local token lookup. If it fails because the token is missing or expired,
+  renew through the board auth flow or ask the owner.
+
 **Run audit trail:** You MUST include `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'` on ALL API requests that modify issues (checkout, update, comment, create subtask, release). This links your actions to the current heartbeat run for traceability.
 
 ## Authenticated deployment and board-user mode
