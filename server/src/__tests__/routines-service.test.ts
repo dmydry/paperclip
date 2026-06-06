@@ -523,6 +523,46 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     });
   });
 
+  it("allows company routine managers to restore revisions assigned to another agent", async () => {
+    const { companyId, routine, svc } = await seedFixture();
+    const otherAgentId = randomUUID();
+    const ceoAgentId = randomUUID();
+    await db.insert(agents).values([
+      {
+        id: otherAgentId,
+        companyId,
+        name: "OtherCoder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: ceoAgentId,
+        companyId,
+        name: "CEO",
+        role: "ceo",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    const revision1Id = routine.latestRevisionId!;
+
+    await svc.update(routine.id, { assigneeAgentId: otherAgentId }, {});
+    const restored = await svc.restoreRevision(routine.id, revision1Id, {
+      agentId: ceoAgentId,
+      canManageAnyCompanyRoutine: true,
+    });
+
+    expect(restored.routine.assigneeAgentId).toBe(routine.assigneeAgentId);
+    expect(restored.routine.latestRevisionNumber).toBe(3);
+  });
+
   it("blocks restoring routine revisions assigned to agents that are no longer assignable", async () => {
     const { agentId, routine, svc } = await seedFixture();
     const revision1Id = routine.latestRevisionId!;

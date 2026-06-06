@@ -36,6 +36,7 @@ const mockEnvironmentService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
 const mockFindServerAdapter = vi.hoisted(() => vi.fn());
+const mockFindActiveServerAdapter = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -63,6 +64,7 @@ vi.mock("../services/environments.js", () => ({
 }));
 
 vi.mock("../adapters/index.js", () => ({
+  findActiveServerAdapter: mockFindActiveServerAdapter,
   findServerAdapter: mockFindServerAdapter,
   listAdapterModels: vi.fn(),
 }));
@@ -93,6 +95,7 @@ function registerModuleMocks() {
   }));
 
   vi.doMock("../adapters/index.js", () => ({
+    findActiveServerAdapter: mockFindActiveServerAdapter,
     findServerAdapter: mockFindServerAdapter,
     listAdapterModels: vi.fn(),
   }));
@@ -175,12 +178,14 @@ describe("agent instructions bundle routes", () => {
     registerModuleMocks();
     vi.clearAllMocks();
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
+    mockFindActiveServerAdapter.mockReturnValue(null);
     mockFindServerAdapter.mockImplementation((_type: string) => ({ type: _type }));
     mockAccessService.decide.mockResolvedValue({
       allowed: true,
       reason: "allow_explicit_grant",
       explanation: "Allowed by test grant",
     });
+    mockAccessService.hasPermission.mockResolvedValue(false);
     mockAgentService.getById.mockResolvedValue(makeAgent());
     mockAgentService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
       ...makeAgent(),
@@ -322,6 +327,45 @@ describe("agent instructions bundle routes", () => {
       "AGENTS.md",
       "# Updated Agent\n",
       { clearLegacyPromptTemplate: false },
+    );
+  });
+
+  it("allows CEO agents to update another agent's instructions path", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === "22222222-2222-4222-8222-222222222222") {
+        return {
+          ...makeAgent(),
+          id,
+          role: "ceo",
+          adapterConfig: {},
+        };
+      }
+      return makeAgent();
+    });
+
+    const res = await requestApp(
+      await createApp({
+        type: "agent",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        companyId: "company-1",
+        companyIds: ["company-1"],
+        source: "agent_key",
+        runId: "run-1",
+      }),
+      (baseUrl) => request(baseUrl)
+        .patch("/api/agents/11111111-1111-4111-8111-111111111111/instructions-path?companyId=company-1")
+        .send({ path: "/tmp/ceo-agent/AGENTS.md" }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({
+          instructionsFilePath: "/tmp/ceo-agent/AGENTS.md",
+        }),
+      }),
+      expect.any(Object),
     );
   });
 

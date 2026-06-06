@@ -75,7 +75,12 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sat: 6,
 };
 
-type Actor = { agentId?: string | null; userId?: string | null; runId?: string | null };
+type Actor = {
+  agentId?: string | null;
+  userId?: string | null;
+  runId?: string | null;
+  canManageAnyCompanyRoutine?: boolean | null;
+};
 type RoutineRow = typeof routines.$inferSelect;
 type RoutineTriggerRow = typeof routineTriggers.$inferSelect;
 
@@ -628,7 +633,7 @@ export function routineService(
     actor: Actor,
   ) {
     await assertAssignableAgent(companyId, assigneeAgentId);
-    if (actor.agentId && assigneeAgentId !== actor.agentId) {
+    if (actor.agentId && !actor.canManageAnyCompanyRoutine && assigneeAgentId !== actor.agentId) {
       throw forbidden("Agents can only restore routine revisions assigned to themselves");
     }
   }

@@ -7,6 +7,7 @@ const agentId = "11111111-1111-4111-8111-111111111111";
 const routineId = "33333333-3333-4333-8333-333333333333";
 const projectId = "44444444-4444-4444-8444-444444444444";
 const otherAgentId = "55555555-5555-4555-8555-555555555555";
+const ceoAgentId = "88888888-8888-4888-8888-888888888888";
 const revisionId = "77777777-7777-4777-8777-777777777777";
 
 const routine = {
@@ -119,6 +120,10 @@ const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
 }));
 
+const mockAgentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackRoutineCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
@@ -149,6 +154,7 @@ function registerModuleMocks() {
 
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
+    agentService: () => mockAgentService,
     logActivity: mockLogActivity,
     routineService: () => mockRoutineService,
   }));
@@ -190,6 +196,11 @@ describe("routine routes", () => {
     mockRoutineService.get.mockResolvedValue(routine);
     mockRoutineService.getTrigger.mockResolvedValue(trigger);
     mockRoutineService.update.mockResolvedValue({ ...routine, assigneeAgentId: otherAgentId });
+    mockAgentService.getById.mockImplementation(async (id: string) => ({
+      id,
+      companyId,
+      role: id === ceoAgentId ? "ceo" : "engineer",
+    }));
     mockRoutineService.listRevisions.mockResolvedValue([revision]);
     mockRoutineService.restoreRevision.mockResolvedValue({
       routine,
@@ -268,6 +279,29 @@ describe("routine routes", () => {
     expect(mockRoutineService.listRevisions).not.toHaveBeenCalled();
   });
 
+  it("allows CEO agents to update company routines assigned to another agent", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId: ceoAgentId,
+      companyId,
+      runId: "99999999-9999-4999-8999-999999999999",
+    });
+
+    const res = await request(app)
+      .patch(`/api/routines/${routineId}`)
+      .send({ title: "Sprint refill routine" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.getById).toHaveBeenCalledWith(ceoAgentId);
+    expect(mockRoutineService.update).toHaveBeenCalledWith(routineId, {
+      title: "Sprint refill routine",
+    }, {
+      agentId: ceoAgentId,
+      userId: null,
+      runId: "99999999-9999-4999-8999-999999999999",
+    });
+  });
+
   it("restores routine revisions with existing routine-management permissions", async () => {
     const app = await createApp({
       type: "agent",
@@ -283,6 +317,7 @@ describe("routine routes", () => {
       agentId,
       userId: null,
       runId: "88888888-8888-4888-8888-888888888888",
+      canManageAnyCompanyRoutine: false,
     });
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "routine.revision_restored",

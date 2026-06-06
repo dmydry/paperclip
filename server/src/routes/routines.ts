@@ -10,7 +10,7 @@ import {
 } from "@paperclipai/shared";
 import { trackRoutineCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, logActivity, routineService } from "../services/index.js";
+import { accessService, agentService, logActivity, routineService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, unauthorized } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -25,6 +25,7 @@ export function routineRoutes(
     pluginWorkerManager: options.pluginWorkerManager,
   });
   const access = accessService(db);
+  const agents = agentService(db);
 
   async function assertBoardCanAssignTasks(req: Request, companyId: string) {
     assertCompanyAccess(req, companyId);
@@ -36,24 +37,33 @@ export function routineRoutes(
     }
   }
 
-  function assertCanManageCompanyRoutine(req: Request, companyId: string, assigneeAgentId?: string | null) {
+  async function assertCanManageCompanyRoutine(req: Request, companyId: string, assigneeAgentId?: string | null) {
     assertCompanyAccess(req, companyId);
     if (req.actor.type === "board") return;
     if (req.actor.type !== "agent" || !req.actor.agentId) throw unauthorized();
-    if (assigneeAgentId !== req.actor.agentId) {
+    if (assigneeAgentId === req.actor.agentId) return;
+
+    const actorAgent = await agents.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.role !== "ceo") {
       throw forbidden("Agents can only manage routines assigned to themselves");
     }
+  }
+
+  async function actorCanManageAnyCompanyRoutine(req: Request, companyId: string) {
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type === "board") return true;
+    if (req.actor.type !== "agent" || !req.actor.agentId) return false;
+    const actorAgent = await agents.getById(req.actor.agentId);
+    return Boolean(actorAgent && actorAgent.companyId === companyId && actorAgent.role === "ceo");
   }
 
   async function assertCanManageExistingRoutine(req: Request, routineId: string) {
     const routine = await svc.get(routineId);
     if (!routine) return null;
-    assertCompanyAccess(req, routine.companyId);
-    if (req.actor.type === "board") return routine;
-    if (req.actor.type !== "agent" || !req.actor.agentId) throw unauthorized();
-    if (routine.assigneeAgentId !== req.actor.agentId) {
-      throw forbidden("Agents can only manage routines assigned to themselves");
-    }
+    await assertCanManageCompanyRoutine(req, routine.companyId, routine.assigneeAgentId);
     return routine;
   }
 
@@ -96,7 +106,7 @@ export function routineRoutes(
   router.post("/companies/:companyId/routines", validate(createRoutineSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertBoardCanAssignTasks(req, companyId);
-    assertCanManageCompanyRoutine(req, companyId, req.body.assigneeAgentId);
+    await assertCanManageCompanyRoutine(req, companyId, req.body.assigneeAgentId);
     const created = await svc.create(companyId, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
@@ -173,7 +183,7 @@ export function routineRoutes(
       req.body.assigneeAgentId !== undefined &&
       req.body.assigneeAgentId !== req.actor.agentId
     ) {
-      throw forbidden("Agents can only assign routines to themselves");
+      await assertCanManageCompanyRoutine(req, routine.companyId, req.body.assigneeAgentId);
     }
     const updated = await svc.update(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
@@ -216,6 +226,7 @@ export function routineRoutes(
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
       runId: req.actor.runId ?? null,
+      canManageAnyCompanyRoutine: await actorCanManageAnyCompanyRoutine(req, routine.companyId),
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
