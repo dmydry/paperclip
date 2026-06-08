@@ -73,6 +73,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     icon: Code,
     recommended: true,
   },
+  codex_subscription_2_local: {
+    label: "Codex Subscription 2",
+    description: "Local Codex agent using the second Paper-01 subscription",
+    icon: Code,
+  },
   gemini_local: {
     label: "Gemini CLI",
     description: "Local Gemini agent",

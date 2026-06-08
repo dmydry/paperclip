@@ -36,13 +36,15 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL, isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
 
+const CODEX_SUBSCRIPTION_2_DEFAULT_MODEL = "gpt-5.5";
+
 function createValuesForAdapterType(
   adapterType: CreateConfigValues["adapterType"],
 ): CreateConfigValues {
   const { adapterType: _discard, ...defaults } = defaultCreateValues;
   const nextValues: CreateConfigValues = { ...defaults, adapterType };
-  if (adapterType === "codex_local") {
-    nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+  if (isCodexAdapterType(adapterType)) {
+    nextValues.model = defaultModelForAdapterType(adapterType);
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
   } else if (adapterType === "gemini_local") {
@@ -53,6 +55,16 @@ function createValuesForAdapterType(
     nextValues.model = DEFAULT_OPENCODE_LOCAL_MODEL;
   }
   return nextValues;
+}
+
+function isCodexAdapterType(adapterType: string): boolean {
+  return adapterType === "codex_local" || adapterType === "codex_subscription_2_local";
+}
+
+function defaultModelForAdapterType(adapterType: string): string {
+  return adapterType === "codex_subscription_2_local"
+    ? CODEX_SUBSCRIPTION_2_DEFAULT_MODEL
+    : DEFAULT_CODEX_LOCAL_MODEL;
 }
 
 export function NewAgent() {

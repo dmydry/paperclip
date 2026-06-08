@@ -27,6 +27,11 @@ const codexLocalCLIAdapter: CLIAdapterModule = {
   formatStdoutEvent: printCodexStreamEvent,
 };
 
+const codexSubscription2LocalCLIAdapter: CLIAdapterModule = {
+  type: "codex_subscription_2_local",
+  formatStdoutEvent: printCodexStreamEvent,
+};
+
 const openCodeLocalCLIAdapter: CLIAdapterModule = {
   type: "opencode_local",
   formatStdoutEvent: printOpenCodeStreamEvent,
@@ -67,6 +72,7 @@ const adaptersByType = new Map<string, CLIAdapterModule>(
     acpxLocalCLIAdapter,
     claudeLocalCLIAdapter,
     codexLocalCLIAdapter,
+    codexSubscription2LocalCLIAdapter,
     openCodeLocalCLIAdapter,
     piLocalCLIAdapter,
     cursorLocalCLIAdapter,

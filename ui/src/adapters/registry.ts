@@ -51,10 +51,17 @@ function notifyAdapterChange(): void {
 setDynamicParserResultNotifier(notifyAdapterChange);
 
 function registerBuiltInUIAdapters() {
+  const codexSubscription2LocalUIAdapter: UIAdapterModule = {
+    ...codexLocalUIAdapter,
+    type: "codex_subscription_2_local",
+    label: "Codex Subscription 2 (local)",
+  };
+
   for (const adapter of [
     acpxLocalUIAdapter,
     claudeLocalUIAdapter,
     codexLocalUIAdapter,
+    codexSubscription2LocalUIAdapter,
     cursorCloudUIAdapter,
     geminiLocalUIAdapter,
     grokLocalUIAdapter,

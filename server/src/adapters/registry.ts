@@ -1,13 +1,16 @@
 import type {
   AdapterModel,
+  AdapterSkillSnapshot,
   AdapterModelProfileDefinition,
   AdapterRuntimeCommandSpec,
   ServerAdapterModule,
 } from "./types.js";
+import path from "node:path";
 import {
   buildSandboxNpmInstallCommand,
   getAdapterSessionManagement,
 } from "@paperclipai/adapter-utils";
+import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-utils/server-utils";
 import {
   execute as acpxExecute,
   testEnvironment as acpxTestEnvironment,
@@ -233,6 +236,70 @@ function prefixAdapterModelLabels(models: AdapterModel[], provider: "Claude" | "
   }));
 }
 
+const CODEX_SUBSCRIPTION_2_ADAPTER_TYPE = "codex_subscription_2_local";
+const CODEX_SUBSCRIPTION_2_DEFAULT_MODEL = "gpt-5.5";
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function readPlainEnvValue(value: unknown): string | null {
+  const direct = readNonEmptyString(value);
+  if (direct) return direct;
+  const record = readRecord(value);
+  return record.type === "plain" ? readNonEmptyString(record.value) : null;
+}
+
+function resolveCodexSubscription2Home(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = readNonEmptyString(env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME);
+  if (explicit) return path.resolve(explicit);
+  const instanceRoot = resolvePaperclipInstanceRootForAdapter({
+    homeDir: readNonEmptyString(env.PAPERCLIP_HOME) ?? undefined,
+    instanceId: readNonEmptyString(env.PAPERCLIP_INSTANCE_ID) ?? undefined,
+    env,
+  });
+  return path.resolve(instanceRoot, "codex-homes", "subscription-2");
+}
+
+function withCodexSubscription2Home(config: Record<string, unknown>): Record<string, unknown> {
+  const env = readRecord(config.env);
+  const existingCodexHome = readPlainEnvValue(env.CODEX_HOME);
+  return {
+    ...config,
+    env: {
+      ...env,
+      CODEX_HOME: existingCodexHome ?? resolveCodexSubscription2Home(),
+    },
+  };
+}
+
+function mapSkillSnapshotAdapterType(
+  snapshot: AdapterSkillSnapshot,
+): AdapterSkillSnapshot {
+  return { ...snapshot, adapterType: CODEX_SUBSCRIPTION_2_ADAPTER_TYPE };
+}
+
+const codexSubscription2ModelProfiles: AdapterModelProfileDefinition[] = codexModelProfiles.map((profile) =>
+  profile.key === "cheap"
+    ? {
+        ...profile,
+        description:
+          "Use the second ChatGPT/Codex subscription lane. Spark is not supported for ChatGPT-login Codex.",
+        adapterConfig: {
+          ...profile.adapterConfig,
+          model: CODEX_SUBSCRIPTION_2_DEFAULT_MODEL,
+          modelReasoningEffort: "high",
+        },
+      }
+    : profile,
+);
+
 async function listAcpxModels(): Promise<AdapterModel[]> {
   const [claude, codex] = await Promise.all([
     listClaudeModels().catch(() => claudeModels),
@@ -307,6 +374,47 @@ const codexLocalAdapter: ServerAdapterModule = {
   getRuntimeCommandSpec: (config) => buildNpmRuntimeCommandSpec(config, "codex", "@openai/codex"),
   agentConfigurationDoc: codexAgentConfigurationDoc,
   getQuotaWindows: codexGetQuotaWindows,
+};
+
+const codexSubscription2LocalAdapter: ServerAdapterModule = {
+  ...codexLocalAdapter,
+  type: CODEX_SUBSCRIPTION_2_ADAPTER_TYPE,
+  execute: (ctx) => {
+    const config = withCodexSubscription2Home(ctx.config);
+    return codexExecute({
+      ...ctx,
+      config,
+      agent: {
+        ...ctx.agent,
+        adapterConfig: withCodexSubscription2Home(readRecord(ctx.agent.adapterConfig)),
+      },
+    });
+  },
+  testEnvironment: (ctx) =>
+    codexTestEnvironment({
+      ...ctx,
+      config: withCodexSubscription2Home(ctx.config),
+    }),
+  listSkills: async (ctx) =>
+    mapSkillSnapshotAdapterType(await listCodexSkills({
+      ...ctx,
+      config: withCodexSubscription2Home(ctx.config),
+    })),
+  syncSkills: async (ctx, desiredSkills) =>
+    mapSkillSnapshotAdapterType(await syncCodexSkills({
+      ...ctx,
+      config: withCodexSubscription2Home(ctx.config),
+    }, desiredSkills)),
+  sessionManagement: getAdapterSessionManagement("codex_local") ?? undefined,
+  modelProfiles: codexSubscription2ModelProfiles,
+  getQuotaWindows: undefined,
+  agentConfigurationDoc:
+    `${codexAgentConfigurationDoc}\n\n` +
+    `# ${CODEX_SUBSCRIPTION_2_ADAPTER_TYPE} Paper-01 alias\n\n` +
+    `This adapter uses the codex_local runtime with CODEX_HOME set to ` +
+    `PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME, or the Paperclip instance's ` +
+    `codex-homes/subscription-2 directory when that env var is not set. ` +
+    `An explicit adapterConfig.env.CODEX_HOME still takes precedence.`,
 };
 
 const cursorLocalAdapter: ServerAdapterModule = {
@@ -515,6 +623,7 @@ function registerBuiltInAdapters() {
     acpxLocalAdapter,
     claudeLocalAdapter,
     codexLocalAdapter,
+    codexSubscription2LocalAdapter,
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorCloudAdapter,
