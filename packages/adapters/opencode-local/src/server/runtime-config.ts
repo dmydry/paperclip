@@ -9,6 +9,8 @@ type PreparedOpenCodeRuntimeConfig = {
   cleanup: () => Promise<void>;
 };
 
+type ExternalDirectoryPermission = "allow" | "deny";
+
 function resolveXdgConfigHome(env: Record<string, string>): string {
   return (
     (typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()) ||
@@ -35,9 +37,11 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   env: Record<string, string>;
   config: Record<string, unknown>;
   targetIsRemote?: boolean;
+  externalDirectoryPermission?: ExternalDirectoryPermission | null;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
-  if (!skipPermissions) {
+  const externalDirectoryPermission = input.externalDirectoryPermission ?? (skipPermissions ? "allow" : null);
+  if (!externalDirectoryPermission) {
     return {
       env: input.env,
       notes: [],
@@ -85,7 +89,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     ...existingConfig,
     permission: {
       ...existingPermission,
-      external_directory: "allow",
+      external_directory: externalDirectoryPermission,
     },
   };
   await fs.writeFile(runtimeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
@@ -96,7 +100,9 @@ export async function prepareOpenCodeRuntimeConfig(input: {
       XDG_CONFIG_HOME: runtimeConfigHome,
     },
     notes: [
-      "Injected runtime OpenCode config with permission.external_directory=allow to avoid headless approval prompts.",
+      externalDirectoryPermission === "allow"
+        ? "Injected runtime OpenCode config with permission.external_directory=allow to avoid headless approval prompts."
+        : "Injected runtime OpenCode config with permission.external_directory=deny to keep tools inside the isolated workspace.",
     ],
     cleanup: async () => {
       await fs.rm(runtimeConfigHome, { recursive: true, force: true });

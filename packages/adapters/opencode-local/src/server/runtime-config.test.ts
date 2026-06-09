@@ -76,4 +76,39 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     expect(prepared.notes).toEqual([]);
     await prepared.cleanup();
   });
+
+  it("can deny external_directory even when the shared config allows it", async () => {
+    const configHome = await makeConfigHome({
+      permission: {
+        external_directory: "allow",
+        read: "allow",
+      },
+    });
+
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: { XDG_CONFIG_HOME: configHome },
+      config: {},
+      externalDirectoryPermission: "deny",
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+    const runtimeConfig = JSON.parse(
+      await fs.readFile(
+        path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(runtimeConfig).toMatchObject({
+      permission: {
+        external_directory: "deny",
+        read: "allow",
+      },
+    });
+    expect(prepared.notes).toEqual([
+      "Injected runtime OpenCode config with permission.external_directory=deny to keep tools inside the isolated workspace.",
+    ]);
+
+    await prepared.cleanup();
+    cleanupPaths.delete(prepared.env.XDG_CONFIG_HOME);
+  });
 });

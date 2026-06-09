@@ -212,10 +212,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
+  const workspaceMode = asString(workspaceContext.mode, "");
   const workspaceSource = asString(workspaceContext.source, "");
+  const workspaceStrategy = asString(workspaceContext.strategy, "");
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBranch = asString(workspaceContext.branchName, "");
+  const workspaceWorktreePath = asString(workspaceContext.worktreePath, "");
   const agentHome = asString(workspaceContext.agentHome, "");
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
     ? context.paperclipWorkspaces.filter(
@@ -227,6 +231,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   let effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
+  const isLocalIsolatedGitWorktree =
+    !executionTargetIsRemote &&
+    workspaceMode === "isolated_workspace" &&
+    workspaceStrategy === "git_worktree" &&
+    workspaceWorktreePath.length > 0;
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
@@ -281,9 +290,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     envConfig,
     workspaceCwd: effectiveWorkspaceCwd,
     workspaceSource,
+    workspaceStrategy,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
+    workspaceBranch,
+    workspaceWorktreePath,
     workspaceHints,
     agentHome,
     executionTargetIsRemote,
@@ -297,7 +309,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
+  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({
+    env,
+    config,
+    externalDirectoryPermission: isLocalIsolatedGitWorktree ? "deny" : undefined,
+  });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {
@@ -386,9 +402,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         envConfig,
         workspaceCwd: effectiveWorkspaceCwd,
         workspaceSource,
+        workspaceStrategy,
         workspaceId,
         workspaceRepoUrl,
         workspaceRepoRef,
+        workspaceBranch,
+        workspaceWorktreePath,
         workspaceHints,
         agentHome,
         executionTargetIsRemote,

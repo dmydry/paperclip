@@ -112,6 +112,72 @@ describe("opencode remote execution", () => {
     }
   });
 
+  it("denies external-directory access for local isolated git worktree runs", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-isolated-"));
+    cleanupDirs.push(rootDir);
+    const worktreeDir = path.join(rootDir, "repo", ".paperclip", "worktrees", "codex", "PAP-123");
+    await mkdir(worktreeDir, { recursive: true });
+    const meta: Array<{ commandNotes?: string[]; env?: Record<string, string>; cwd?: string }> = [];
+
+    const result = await execute({
+      runId: "run-local-isolated",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "OpenCode Builder",
+        adapterType: "opencode_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "opencode",
+        model: "opencode/gpt-5-nano",
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: worktreeDir,
+          mode: "isolated_workspace",
+          source: "project_primary",
+          strategy: "git_worktree",
+          branchName: "codex/PAP-123",
+          worktreePath: worktreeDir,
+          workspaceId: "workspace-1",
+          repoUrl: "https://github.com/paperclipai/paperclip.git",
+          repoRef: "main",
+        },
+      },
+      onLog: async () => {},
+      onMeta: async (entry) => {
+        meta.push({
+          commandNotes: entry.commandNotes,
+          env: entry.env,
+          cwd: entry.cwd,
+        });
+      },
+    });
+
+    expect(result.sessionParams).toMatchObject({
+      sessionId: "session_123",
+      cwd: worktreeDir,
+      workspaceId: "workspace-1",
+      repoUrl: "https://github.com/paperclipai/paperclip.git",
+      repoRef: "main",
+    });
+    expect(meta.at(-1)?.cwd).toBe(worktreeDir);
+    expect(meta.at(-1)?.commandNotes).toContain(
+      "Injected runtime OpenCode config with permission.external_directory=deny to keep tools inside the isolated workspace.",
+    );
+    expect(meta.at(-1)?.env?.PAPERCLIP_WORKSPACE_CWD).toBe(worktreeDir);
+    expect(meta.at(-1)?.env?.PAPERCLIP_WORKSPACE_STRATEGY).toBe("git_worktree");
+    expect(meta.at(-1)?.env?.PAPERCLIP_WORKSPACE_WORKTREE_PATH).toBe(worktreeDir);
+    expect(meta.at(-1)?.env?.PAPERCLIP_WORKSPACE_BRANCH).toBe("codex/PAP-123");
+  });
+
   it("prepares the workspace, syncs OpenCode skills, and restores workspace changes for remote SSH execution", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-remote-"));
     cleanupDirs.push(rootDir);
