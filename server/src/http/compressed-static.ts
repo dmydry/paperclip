@@ -79,7 +79,7 @@ export function compressedStaticAssetMiddleware(
       return;
     }
 
-    res.type(filePath);
+    res.type(path.extname(filePath));
     res.set("Content-Encoding", encoding);
     res.set("Vary", "Accept-Encoding");
     if (opts.cacheControl) {
