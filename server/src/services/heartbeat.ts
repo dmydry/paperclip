@@ -10261,7 +10261,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   return {
     list: async (companyId: string, agentId?: string, limit?: number) => {
       const safeForLegacyEncoding = await hasUnsafeTextProjectionDatabase();
-      const query = db
+      const whereCondition = agentId
+        ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))
+        : eq(heartbeatRuns.companyId, companyId);
+      const recentIdsQuery = db
+        .select({
+          id: heartbeatRuns.id,
+        })
+        .from(heartbeatRuns)
+        .where(whereCondition)
+        .orderBy(desc(heartbeatRuns.createdAt));
+      const recentIds = (limit ? await recentIdsQuery.limit(limit) : await recentIdsQuery).map((row) => row.id);
+      if (recentIds.length === 0) return [];
+
+      const rows = await db
         .select(
           safeForLegacyEncoding
             ? {
@@ -10276,15 +10289,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               },
         )
         .from(heartbeatRuns)
-        .where(
-          agentId
-            ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))
-            : eq(heartbeatRuns.companyId, companyId),
-        )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .where(inArray(heartbeatRuns.id, recentIds));
+      const rowsById = new Map(rows.map((row) => [row.id, row]));
 
-      const rows = limit ? await query.limit(limit) : await query;
-      return rows.map((row) => {
+      return recentIds.flatMap((id) => {
+        const row = rowsById.get(id);
+        if (!row) return [];
         const {
           contextIssueId,
           contextTaskId,

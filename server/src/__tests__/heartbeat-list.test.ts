@@ -201,6 +201,89 @@ describeEmbeddedPostgres("heartbeat list", () => {
     expect((result?.stdout as string).length).toBeLessThan(oversizedStdout.length);
     expect(result).not.toHaveProperty("nestedHuge");
   });
+
+  it("returns recent runs in order after limiting on the narrow indexed path", async () => {
+    const companyId = randomUUID();
+    const firstAgentId = randomUUID();
+    const secondAgentId = randomUUID();
+    const oldRunId = randomUUID();
+    const middleRunId = randomUUID();
+    const newestRunId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: "PAP",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: firstAgentId,
+        companyId,
+        name: "First",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: secondAgentId,
+        companyId,
+        name: "Second",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(heartbeatRuns).values([
+      {
+        id: oldRunId,
+        companyId,
+        agentId: firstAgentId,
+        invocationSource: "assignment",
+        status: "failed",
+        contextSnapshot: { issueId: "old-issue" },
+        resultJson: { summary: "old summary" },
+        createdAt: new Date("2026-06-11T01:00:00.000Z"),
+        updatedAt: new Date("2026-06-11T01:00:00.000Z"),
+      },
+      {
+        id: middleRunId,
+        companyId,
+        agentId: firstAgentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId: "middle-issue" },
+        resultJson: { summary: "middle summary" },
+        createdAt: new Date("2026-06-11T02:00:00.000Z"),
+        updatedAt: new Date("2026-06-11T02:00:00.000Z"),
+      },
+      {
+        id: newestRunId,
+        companyId,
+        agentId: secondAgentId,
+        invocationSource: "assignment",
+        status: "timed_out",
+        contextSnapshot: { issueId: "newest-issue" },
+        resultJson: { summary: "newest summary" },
+        createdAt: new Date("2026-06-11T03:00:00.000Z"),
+        updatedAt: new Date("2026-06-11T03:00:00.000Z"),
+      },
+    ]);
+
+    const recentRuns = await heartbeatService(db).list(companyId, undefined, 2);
+    expect(recentRuns.map((run) => run.id)).toEqual([newestRunId, middleRunId]);
+    expect(recentRuns[0]?.contextSnapshot).toMatchObject({ issueId: "newest-issue" });
+    expect(recentRuns[0]?.resultJson).toMatchObject({ summary: "newest summary" });
+
+    const firstAgentRuns = await heartbeatService(db).list(companyId, firstAgentId, 10);
+    expect(firstAgentRuns.map((run) => run.id)).toEqual([middleRunId, oldRunId]);
+  });
 });
 
 describe("heartbeat run event payload bounding", () => {

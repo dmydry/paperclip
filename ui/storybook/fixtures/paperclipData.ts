@@ -1252,6 +1252,8 @@ export const storybookSidebarBadges: SidebarBadges = {
   approvals: 2,
   failedRuns: 1,
   joinRequests: 1,
+  unreadTouchedIssues: 3,
+  alerts: 0,
 };
 
 export const storybookDashboardSummary: DashboardSummary = {

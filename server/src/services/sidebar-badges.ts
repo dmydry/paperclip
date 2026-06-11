@@ -80,6 +80,8 @@ export function sidebarBadgeService(db: Db) {
         approvals: actionableApprovals,
         failedRuns,
         joinRequests,
+        unreadTouchedIssues,
+        alerts: 0,
       };
     },
   };

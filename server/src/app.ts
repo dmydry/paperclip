@@ -62,6 +62,7 @@ import { createHostClientHandlers } from "@paperclipai/plugin-sdk";
 import type { BetterAuthSessionResult } from "./auth/better-auth.js";
 import { createCachedViteHtmlRenderer } from "./vite-html-renderer.js";
 import { DEFAULT_JSON_BODY_LIMIT, PORTABLE_JSON_BODY_LIMIT } from "./http/body-limits.js";
+import { compressedStaticAssetMiddleware } from "./http/compressed-static.js";
 import { COMPANY_IMPORT_API_PATH } from "./routes/company-import-paths.js";
 
 type UiMode = "none" | "static" | "vite-dev";
@@ -331,11 +332,18 @@ export async function createApp(
     ];
     const uiDist = candidates.find((p) => fs.existsSync(path.join(p, "index.html")));
     if (uiDist) {
+      const assetsDir = path.join(uiDist, "assets");
       // Hashed asset files (Vite emits them under /assets/<name>.<hash>.<ext>)
       // never change once built, so they can be cached aggressively.
       app.use(
         "/assets",
-        express.static(path.join(uiDist, "assets"), {
+        compressedStaticAssetMiddleware(assetsDir, {
+          cacheControl: "public, max-age=31536000, immutable",
+        }),
+      );
+      app.use(
+        "/assets",
+        express.static(assetsDir, {
           maxAge: "1y",
           immutable: true,
         }),

@@ -1,26 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { accessApi } from "../api/access";
 import { ApiError } from "../api/client";
 import { inboxDismissalsApi } from "../api/inboxDismissals";
-import { approvalsApi } from "../api/approvals";
-import { dashboardApi } from "../api/dashboard";
-import { heartbeatsApi } from "../api/heartbeats";
-import { issuesApi } from "../api/issues";
+import { sidebarBadgesApi } from "../api/sidebarBadges";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildInboxDismissedAtByKey,
-  computeInboxBadgeData,
+  type InboxBadgeData,
   loadDismissedInboxAlerts,
   saveDismissedInboxAlerts,
   loadReadInboxItems,
   saveReadInboxItems,
   READ_ITEMS_KEY,
 } from "../lib/inbox";
-
-const INBOX_UNREAD_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
-const INBOX_BADGE_ISSUE_LIMIT = 500;
-const INBOX_BADGE_HEARTBEAT_RUN_LIMIT = 200;
 
 export function useDismissedInboxAlerts() {
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedInboxAlerts);
@@ -138,64 +130,38 @@ export function useReadInboxItems() {
 
 export function useInboxBadge(companyId: string | null | undefined) {
   const { dismissed: dismissedAlerts } = useDismissedInboxAlerts();
-  const { dismissedAtByKey } = useInboxDismissals(companyId);
-
-  const { data: approvals = [] } = useQuery({
-    queryKey: queryKeys.approvals.list(companyId!),
-    queryFn: () => approvalsApi.list(companyId!),
-    enabled: !!companyId,
-  });
-
-  const { data: joinRequests = [] } = useQuery({
-    queryKey: queryKeys.access.joinRequests(companyId!),
+  const dismissedAlertKey = useMemo(
+    () => Array.from(dismissedAlerts).sort().join("|"),
+    [dismissedAlerts],
+  );
+  const { data: sidebarBadges } = useQuery({
+    queryKey: companyId
+      ? [...queryKeys.sidebarBadges(companyId), "dismissed-alerts", dismissedAlertKey]
+      : ["sidebar-badges", "__disabled__"] as const,
     queryFn: async () => {
       try {
-        return await accessApi.listJoinRequests(companyId!, "pending_approval");
+        return await sidebarBadgesApi.get(companyId!, { dismissedAlerts });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-          return [];
+          return null;
         }
         throw err;
       }
     },
     enabled: !!companyId,
     retry: false,
-  });
-
-  const { data: dashboard } = useQuery({
-    queryKey: queryKeys.dashboard(companyId!),
-    queryFn: () => dashboardApi.summary(companyId!),
-    enabled: !!companyId,
-  });
-
-  const { data: unreadTouchedIssues = [] } = useQuery({
-    queryKey: queryKeys.issues.listUnreadTouchedByMe(companyId!),
-    queryFn: () =>
-      issuesApi.list(companyId!, {
-        unreadForUserId: "me",
-        status: INBOX_UNREAD_ISSUE_STATUSES,
-        limit: INBOX_BADGE_ISSUE_LIMIT,
-      }),
-    enabled: !!companyId,
-  });
-
-  const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: [...queryKeys.heartbeats(companyId!), "limit", INBOX_BADGE_HEARTBEAT_RUN_LIMIT],
-    queryFn: () => heartbeatsApi.list(companyId!, undefined, INBOX_BADGE_HEARTBEAT_RUN_LIMIT),
-    enabled: !!companyId,
+    refetchInterval: 15_000,
   });
 
   return useMemo(
-    () =>
-      computeInboxBadgeData({
-        approvals,
-        joinRequests,
-        dashboard,
-        heartbeatRuns,
-        unreadTouchedIssues,
-        dismissedAlerts,
-        dismissedAtByKey,
-      }),
-    [approvals, joinRequests, dashboard, heartbeatRuns, unreadTouchedIssues, dismissedAlerts, dismissedAtByKey],
+    (): InboxBadgeData => ({
+      inbox: sidebarBadges?.inbox ?? 0,
+      approvals: sidebarBadges?.approvals ?? 0,
+      failedRuns: sidebarBadges?.failedRuns ?? 0,
+      joinRequests: sidebarBadges?.joinRequests ?? 0,
+      unreadTouchedIssues: sidebarBadges?.unreadTouchedIssues ?? 0,
+      alerts: sidebarBadges?.alerts ?? 0,
+    }),
+    [sidebarBadges],
   );
 }
