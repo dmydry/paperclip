@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommands } from "../commands/client/goal.js";
 import { registerProjectCommands } from "../commands/client/project.js";
@@ -6,6 +9,7 @@ import { registerProjectCommands } from "../commands/client/project.js";
 const COMPANY_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 const GOAL_ID = "44444444-4444-4444-8444-444444444444";
+let contextPath: string;
 
 function createProgram(): Command {
   const program = new Command();
@@ -25,6 +29,7 @@ describe("project and goal commands", () => {
     delete process.env.PAPERCLIP_API_KEY;
     delete process.env.PAPERCLIP_API_URL;
     delete process.env.PAPERCLIP_COMPANY_ID;
+    contextPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-project-goal-cli-")), "context.json");
   });
 
   afterEach(() => {
@@ -55,6 +60,7 @@ describe("project and goal commands", () => {
       "project", "create",
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--company-id", COMPANY_ID,
       "--name", "Launch Site",
       "--status", "planned",
@@ -65,6 +71,7 @@ describe("project and goal commands", () => {
       "project", "update", PROJECT_ID,
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--status", "in_progress",
     ], { from: "user" });
 
@@ -90,6 +97,7 @@ describe("project and goal commands", () => {
       "project", "list",
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--company-id", COMPANY_ID,
     ], { from: "user" });
 
@@ -97,6 +105,7 @@ describe("project and goal commands", () => {
       "project", "delete", PROJECT_ID,
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--yes",
     ], { from: "user" });
 
@@ -119,6 +128,7 @@ describe("project and goal commands", () => {
       "goal", "create",
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--company-id", COMPANY_ID,
       "--title", "Grow",
       "--level", "company",
@@ -129,6 +139,7 @@ describe("project and goal commands", () => {
       "goal", "update", GOAL_ID,
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--title", "Grow faster",
     ], { from: "user" });
 
@@ -136,6 +147,7 @@ describe("project and goal commands", () => {
       "goal", "list",
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--company-id", COMPANY_ID,
     ], { from: "user" });
 
@@ -143,6 +155,7 @@ describe("project and goal commands", () => {
       "goal", "delete", GOAL_ID,
       "--api-base", "http://localhost:3100",
       "--api-key", "board-token",
+      "--context", contextPath,
       "--yes",
     ], { from: "user" });
 

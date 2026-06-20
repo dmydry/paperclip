@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CompanyPortabilityPreviewResult } from "@paperclipai/shared";
 import {
@@ -16,6 +19,7 @@ import {
 
 const ORIGINAL_ENV = { ...process.env };
 const COMPANY_ID = "22222222-2222-4222-8222-222222222222";
+let contextPath: string;
 
 function makeProgram(): Command {
   const program = new Command();
@@ -29,7 +33,7 @@ function makeProgram(): Command {
 }
 
 async function runCommand(args: string[]): Promise<void> {
-  await makeProgram().parseAsync(args, { from: "user" });
+  await makeProgram().parseAsync([...args, "--context", contextPath], { from: "user" });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -74,6 +78,7 @@ describe("company CLI commands", () => {
     delete process.env.PAPERCLIP_API_URL;
     delete process.env.PAPERCLIP_API_KEY;
     delete process.env.PAPERCLIP_COMPANY_ID;
+    contextPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-")), "context.json");
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
