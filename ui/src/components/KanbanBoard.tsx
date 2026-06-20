@@ -23,6 +23,7 @@ import { Identity } from "./Identity";
 import type { Issue, IssueStatus } from "@paperclipai/shared";
 import { AlertTriangle } from "lucide-react";
 import { isSuccessfulRunHandoffRequired } from "../lib/successful-run-handoff";
+import { collectSubtreeLiveCounts } from "../lib/liveIssueIds";
 
 export const KANBAN_BOARD_HIGH_VOLUME_THRESHOLD = 100;
 export const KANBAN_COLUMN_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
@@ -78,6 +79,7 @@ function KanbanColumn({
   agents,
   userName,
   liveIssueIds,
+  subtreeLiveCounts,
   compactCards = false,
   collapsed = false,
   visibleCount,
@@ -89,6 +91,7 @@ function KanbanColumn({
   agents?: Agent[];
   userName?: (id: string | null) => string | null;
   liveIssueIds?: Set<string>;
+  subtreeLiveCounts?: ReadonlyMap<string, number>;
   compactCards?: boolean;
   collapsed?: boolean;
   visibleCount: number;
@@ -155,6 +158,7 @@ function KanbanColumn({
               agents={agents}
               userName={userName}
               isLive={liveIssueIds?.has(issue.id)}
+              subtreeLiveCount={subtreeLiveCounts?.get(issue.id) ?? 0}
               compact={compactCards}
             />
           ))}
@@ -185,6 +189,7 @@ function KanbanCard({
   agents,
   userName,
   isLive,
+  subtreeLiveCount = 0,
   isOverlay,
   compact = false,
 }: {
@@ -192,6 +197,7 @@ function KanbanCard({
   agents?: Agent[];
   userName?: (id: string | null) => string | null;
   isLive?: boolean;
+  subtreeLiveCount?: number;
   isOverlay?: boolean;
   compact?: boolean;
 }) {
@@ -242,7 +248,7 @@ function KanbanCard({
           {isSuccessfulRunHandoffRequired(issue) ? (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-50/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-300/35 dark:bg-amber-400/10 dark:text-amber-300"
-              title="This issue needs a next step"
+              title="This task needs a next step"
               aria-label="Needs next step"
             >
               <AlertTriangle className="h-3 w-3" />
@@ -256,6 +262,15 @@ function KanbanCard({
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
               </span>
               {compact ? "Live" : null}
+            </span>
+          )}
+          {!isLive && subtreeLiveCount > 0 && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title={`${subtreeLiveCount} sub-task${subtreeLiveCount === 1 ? "" : "s"} running below`}
+            >
+              <span className="h-2 w-2 shrink-0 rounded-full border border-muted-foreground/60" aria-hidden="true" />
+              {subtreeLiveCount} live below
             </span>
           )}
         </div>
@@ -331,6 +346,11 @@ export function KanbanBoard({
     [activeId, issues]
   );
 
+  const subtreeLiveCounts = useMemo(
+    () => collectSubtreeLiveCounts(issues, liveIssueIds ?? new Set<string>()),
+    [issues, liveIssueIds],
+  );
+
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string);
   }
@@ -373,6 +393,7 @@ export function KanbanBoard({
             agents={agents}
             userName={userName}
             liveIssueIds={liveIssueIds}
+            subtreeLiveCounts={subtreeLiveCounts}
             compactCards={compactCards}
             collapsed={collapsedStatusSet.has(status)}
             visibleCount={visibleCountByStatus[status] ?? initialVisibleCount}
