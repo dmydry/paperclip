@@ -123,15 +123,32 @@ describe("FileViewerSheet copy actions", () => {
     });
   }
 
-  async function click(label: string) {
-    const button = document.body.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null;
-    expect(button).not.toBeNull();
-    flushSync(() => {
-      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+async function click(label: string) {
+  const button = document.body.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null;
+  expect(button).not.toBeNull();
+  flushSync(() => {
+    button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitForAssertion(assertion: () => void, attempts = 20) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
+
+  throw lastError;
+}
 
   it("copies file contents and shows confirmation", async () => {
     renderSheet();
@@ -139,7 +156,9 @@ describe("FileViewerSheet copy actions", () => {
     await click("Copy file contents");
 
     expect(writeText).toHaveBeenCalledWith("hello from the file");
-    expect(document.body.textContent).toContain("Copied contents");
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain("Copied contents");
+    });
   });
 
   it("copies the current file view link and shows confirmation", async () => {
@@ -148,7 +167,9 @@ describe("FileViewerSheet copy actions", () => {
     await click("Copy link to this file view");
 
     expect(writeText).toHaveBeenCalledWith(window.location.href);
-    expect(document.body.textContent).toContain("Copied link");
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain("Copied link");
+    });
   });
 
   it("renders a keyboard-addressable file tree resize separator", () => {
