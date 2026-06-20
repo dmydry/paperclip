@@ -426,13 +426,6 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function normalizeAgentMentionToken(value: string): string {
-  return value
-    .trim()
-    .replace(/[\s_-]+/g, "")
-    .replace(/[^a-zA-Z0-9]/g, "");
-}
-
 export function findMentionedAgentIdsInBody(
   body: string,
   agentRows: Array<{ id: string; name: string }>,
@@ -6449,26 +6442,10 @@ export function issueService(db: Db) {
       if (!body.trim()) return [];
       const rows = await db.select({ id: agents.id, name: agents.name })
         .from(agents).where(eq(agents.companyId, companyId));
-      const resolved = new Set<string>(extractAgentMentionIds(body));
-      for (const agentId of findMentionedAgentIdsInBody(body, rows)) {
-        resolved.add(agentId);
-      }
-
-      const re = /\B@([^\s@,!?.]+)/g;
-      const tokens = new Set<string>();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) {
-        const normalized = normalizeAgentMentionToken(m[1]);
-        if (normalized) tokens.add(normalized.toLowerCase());
-      }
-      for (const agent of rows) {
-        if (
-          tokens.has(agent.name.toLowerCase()) ||
-          tokens.has(normalizeAgentMentionToken(agent.name).toLowerCase())
-        ) {
-          resolved.add(agent.id);
-        }
-      }
+      const localAgentIds = new Set(rows.map((agent) => agent.id));
+      const resolved = new Set(
+        extractAgentMentionIds(body).filter((agentId) => localAgentIds.has(agentId)),
+      );
       return [...resolved];
     },
 
