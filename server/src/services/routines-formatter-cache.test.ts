@@ -17,6 +17,15 @@ describe("nextCronTickInTimeZone formatter caching", () => {
     expect(next!.toISOString()).toBe("2026-07-01T10:30:00.000Z");
   });
 
+  it("computes the next daily UTC occurrence", () => {
+    const next = nextCronTickInTimeZone(
+      "0 0 * * *",
+      "UTC",
+      new Date("2026-06-20T08:00:00Z"),
+    );
+    expect(next?.toISOString()).toBe("2026-06-21T00:00:00.000Z");
+  });
+
   it("does not construct a new Intl.DateTimeFormat per minute-step", () => {
     const RealDateTimeFormat = Intl.DateTimeFormat;
     let constructions = 0;

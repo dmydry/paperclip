@@ -144,7 +144,7 @@ function getZonedMinuteParts(date: Date, timeZone: string) {
     year: Number(map.year),
     month: Number(map.month),
     day: Number(map.day),
-    hour: Number(map.hour),
+    hour: Number(map.hour) === 24 ? 0 : Number(map.hour),
     minute: Number(map.minute),
     weekday,
   };

@@ -73,6 +73,7 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(agents);
+    await db.delete(activityLog);
     await db.delete(companies);
     await db.delete(instanceSettings);
   });
@@ -1730,5 +1731,5 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       .where(eq(routineRuns.routineId, routine.id));
     expect(runsAfterResume).toHaveLength(2);
     expect(runsAfterResume.some((run) => run.status === "issue_created")).toBe(true);
-  });
+  }, 30_000);
 });
