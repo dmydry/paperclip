@@ -522,7 +522,7 @@ describe.sequential("issue comment reopen routes", () => {
     ));
   });
 
-  it("rejects non-assignee agent POST comments on closed issues without a comment grant", async () => {
+  it("allows non-assignee same-company agent POST comments on closed issues without reopening", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("done"));
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
@@ -533,6 +533,15 @@ describe.sequential("issue comment reopen routes", () => {
       updatedAt: new Date(),
       authorAgentId: "33333333-3333-4333-8333-333333333333",
       authorUserId: null,
+    });
+    mockAccessService.decide.mockImplementation(async (input: { action?: string }) => {
+      const allowed = input.action === "issue:comment";
+      return {
+        allowed,
+        action: input.action,
+        reason: allowed ? "allow_company_agent" : "deny_missing_grant",
+        explanation: allowed ? "Allowed by same-company comment policy." : "Missing permission.",
+      };
     });
 
     const res = await request(await installActor(createApp(), {
@@ -545,10 +554,10 @@ describe.sequential("issue comment reopen routes", () => {
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "hello" });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent cannot mutate another agent's issue");
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(mockIssueService.update).not.toHaveBeenCalled();
-    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).toHaveBeenCalled();
+    expect(mockAccessService.decide).not.toHaveBeenCalledWith(expect.objectContaining({ action: "issue:mutate" }));
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 

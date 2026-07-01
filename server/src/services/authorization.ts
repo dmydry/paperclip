@@ -1183,6 +1183,14 @@ export function authorizationService(db: Db) {
       });
     }
 
+    if (input.action === "issue:comment") {
+      return allow({
+        action: input.action,
+        reason: "allow_company_agent",
+        explanation: "Allowed because same-company agents may post issue comments.",
+      });
+    }
+
     const lowTrustDecision = await decideLowTrustAccess({
       actorAgentId,
       action: input.action,
@@ -1200,7 +1208,6 @@ export function authorizationService(db: Db) {
         input.action === "agent:read" ||
         input.action === "agent:wake" ||
         input.action === "company_scope:read" ||
-        input.action === "issue:comment" ||
         input.action === "issue:read" ||
         input.action === "project:read" ||
         input.action === "runtime:manage" ||
@@ -1263,7 +1270,7 @@ export function authorizationService(db: Db) {
       });
     }
 
-    if (input.action === "issue:comment" || input.action === "issue:mutate") {
+    if (input.action === "issue:mutate") {
       const resource = input.resource.type === "issue" ? input.resource : null;
       if (resource?.assigneeAgentId === actorAgentId) {
         return allow({
@@ -1278,19 +1285,6 @@ export function authorizationService(db: Db) {
           reason: "allow_company_agent",
           explanation: "Allowed because the issue has no agent assignee.",
         });
-      }
-      if (
-        input.action === "issue:comment" &&
-        resource?.issueId &&
-        await agentHasMentionGrantOnIssue({
-          action: input.action,
-          companyId,
-          issueId: resource.issueId,
-          issueAssigneeAgentId: resource.assigneeAgentId ?? null,
-          actorAgentId,
-        })
-      ) {
-        return allowIssueMentionGrant(input.action);
       }
     }
     if (

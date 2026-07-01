@@ -621,7 +621,7 @@ describeEmbeddedPostgres("authorization service", () => {
     });
   });
 
-  it("allows mentioned agents to read and comment on assigned issues without granting issue mutation", async () => {
+  it("allows same-company agents to comment on assigned issues without granting read or mutation", async () => {
     const company = await createCompany(db, "MentionCommentAuth");
     const allowedProject = await createProject(db, company.id, "MentionAllowed");
     const targetProject = await createProject(db, company.id, "MentionTarget");
@@ -660,7 +660,7 @@ describeEmbeddedPostgres("authorization service", () => {
       actor,
       action: "issue:comment",
       resource,
-    })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
+    })).resolves.toMatchObject({ allowed: true, reason: "allow_company_agent" });
 
     const deletedMention = await db.insert(issueComments).values({
       companyId: company.id,
@@ -674,7 +674,7 @@ describeEmbeddedPostgres("authorization service", () => {
       actor,
       action: "issue:comment",
       resource,
-    })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
+    })).resolves.toMatchObject({ allowed: true, reason: "allow_company_agent" });
 
     await db.insert(issueComments).values({
       companyId: company.id,
@@ -697,13 +697,67 @@ describeEmbeddedPostgres("authorization service", () => {
       resource,
     })).resolves.toMatchObject({
       allowed: true,
-      reason: "allow_issue_mention_grant",
+      reason: "allow_company_agent",
     });
     await expect(authorization.decide({
       actor,
       action: "issue:mutate",
       resource,
     })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
+  });
+
+  it("allows low-trust agents to post comments on same-company issues without granting mutation", async () => {
+    const company = await createCompany(db, "CompanyWideAgentComments");
+    const allowedProject = await createProject(db, company.id, "Allowed");
+    const targetProject = await createProject(db, company.id, "Target");
+    const assigneeAgent = await createAgent(db, company.id, { role: "content_operator" });
+    const commenterAgent = await createAgent(db, company.id, {
+      role: "content_qa",
+      permissions: {
+        trustPreset: LOW_TRUST_REVIEW_PRESET,
+        authorizationPolicy: {
+          trustBoundary: {
+            mode: LOW_TRUST_REVIEW_PRESET,
+            companyId: company.id,
+            projectIds: [allowedProject.id],
+          },
+        },
+      },
+    });
+    const issue = await createIssue(db, company.id, {
+      title: "Company-wide comment target",
+      projectId: targetProject.id,
+      assigneeAgentId: assigneeAgent.id,
+    });
+
+    const authorization = authorizationService(db);
+    const actor = { type: "agent", agentId: commenterAgent.id, companyId: company.id, source: "agent_key" } as const;
+    const resource = {
+      type: "issue",
+      companyId: company.id,
+      issueId: issue.id,
+      projectId: issue.projectId,
+      assigneeAgentId: issue.assigneeAgentId,
+      status: issue.status,
+    } as const;
+
+    await expect(authorization.decide({
+      actor,
+      action: "issue:comment",
+      resource,
+    })).resolves.toMatchObject({
+      allowed: true,
+      reason: "allow_company_agent",
+    });
+
+    await expect(authorization.decide({
+      actor,
+      action: "issue:mutate",
+      resource,
+    })).resolves.toMatchObject({
+      allowed: false,
+      reason: "deny_low_trust_boundary",
+    });
   });
 
   it("allows a mentioned non-assignee to comment when the mention author is the issue assignee", async () => {
@@ -750,7 +804,7 @@ describeEmbeddedPostgres("authorization service", () => {
       },
     })).resolves.toMatchObject({
       allowed: true,
-      reason: "allow_issue_mention_grant",
+      reason: "allow_company_agent",
     });
   });
 
@@ -814,7 +868,7 @@ describeEmbeddedPostgres("authorization service", () => {
       actor,
       action: "issue:comment",
       resource,
-    })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
+    })).resolves.toMatchObject({ allowed: true, reason: "allow_company_agent" });
   });
 
   it("allows active board-user comments to create mention-scoped issue grants", async () => {
@@ -871,7 +925,7 @@ describeEmbeddedPostgres("authorization service", () => {
       resource,
     })).resolves.toMatchObject({
       allowed: true,
-      reason: "allow_issue_mention_grant",
+      reason: "allow_company_agent",
     });
   });
 

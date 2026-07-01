@@ -730,21 +730,25 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
-  it("rejects non-mentioned peer agents from posting comments", async () => {
+  it("allows same-company peer agents to post comments without a mention grant", async () => {
     mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
-      allowed: input.action === "issue:read",
+      allowed: input.action === "issue:comment",
       action: input.action,
-      reason: input.action === "issue:read" ? "allow_explicit_grant" : "deny_missing_grant",
-      explanation: input.action === "issue:read" ? "Allowed by test read grant." : "Missing permission.",
+      reason: input.action === "issue:comment" ? "allow_company_agent" : "deny_missing_grant",
+      explanation: input.action === "issue:comment" ? "Allowed by same-company comment policy." : "Missing permission.",
     }));
 
     const res = await request(await createApp(peerActor()))
       .post(`/api/issues/${issueId}/comments`)
-      .send({ body: "I was not mentioned." });
+      .send({ body: "I can comment without a mention." });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(res.body.error).toBe("Issue is outside this actor's authorization boundary");
-    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      issueId,
+      "I can comment without a mention.",
+      expect.any(Object),
+      expect.any(Object),
+    );
   });
 
   it("rejects peer agents from listing comments when issue read is outside their boundary", async () => {

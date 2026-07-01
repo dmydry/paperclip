@@ -1971,8 +1971,9 @@ export function issueRoutes(
     return boundaryDecision;
   }
 
-  function isIssueMentionGrantDecision(decision: true | Awaited<ReturnType<typeof decideIssueAccess>>) {
-    return decision !== true && decision.reason === "allow_issue_mention_grant";
+  function isAppendOnlyPeerAgentCommentDecision(decision: true | Awaited<ReturnType<typeof decideIssueAccess>>) {
+    return decision !== true &&
+      (decision.reason === "allow_issue_mention_grant" || decision.reason === "allow_company_agent");
   }
 
   async function filterIssuesForActor<T extends Parameters<typeof decideIssueAccess>[1]>(req: Request, rows: T[]) {
@@ -7464,22 +7465,22 @@ export function issueRoutes(
     const interruptRequested = req.body.interrupt === true;
     const isClosed = isClosedIssueStatus(issue.status);
     const isBlocked = issue.status === "blocked";
-    const mentionGrantedPeerAgentCommentOnly =
+    const appendOnlyPeerAgentComment =
       isClosed &&
       req.actor.type === "agent" &&
       issue.assigneeAgentId !== null &&
       issue.assigneeAgentId !== req.actor.agentId &&
       !reopenRequested &&
       !resumeRequested &&
-      isIssueMentionGrantDecision(commentAccessDecision);
-    const effectiveReopenRequested = mentionGrantedPeerAgentCommentOnly ? false : reopenRequested;
-    const effectiveResumeRequested = mentionGrantedPeerAgentCommentOnly ? false : resumeRequested;
+      isAppendOnlyPeerAgentCommentDecision(commentAccessDecision);
+    const effectiveReopenRequested = appendOnlyPeerAgentComment ? false : reopenRequested;
+    const effectiveResumeRequested = appendOnlyPeerAgentComment ? false : resumeRequested;
     if (
       isClosed &&
       req.actor.type === "agent" &&
       issue.assigneeAgentId !== null &&
       issue.assigneeAgentId !== req.actor.agentId &&
-      !mentionGrantedPeerAgentCommentOnly
+      !appendOnlyPeerAgentComment
     ) {
       if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     }
