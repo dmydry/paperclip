@@ -2373,10 +2373,22 @@ export async function runChildProcess(
 ): Promise<RunProcessResult> {
   const onLogError = opts.onLogError ?? ((err, id, msg) => console.warn({ err, runId: id }, msg));
   return new Promise<RunProcessResult>((resolve, reject) => {
+    const envOverrides: Record<string, string> = {};
+    const unsetEnvKeys = new Set<string>();
+    for (const [key, value] of Object.entries(opts.env)) {
+      if (value === "") {
+        unsetEnvKeys.add(key);
+        continue;
+      }
+      envOverrides[key] = value;
+    }
     const rawMerged: NodeJS.ProcessEnv = {
       ...sanitizeInheritedPaperclipEnv(process.env),
-      ...opts.env,
+      ...envOverrides,
     };
+    for (const key of unsetEnvKeys) {
+      delete rawMerged[key];
+    }
 
     // Strip Claude Code nesting-guard env vars so spawned `claude` processes
     // don't refuse to start with "cannot be launched inside another session".
@@ -2396,7 +2408,7 @@ export async function runChildProcess(
     const mergedEnv = ensurePathInEnv(rawMerged);
     void resolveSpawnTarget(command, args, opts.cwd, mergedEnv, {
       remoteExecution: opts.remoteExecution ?? null,
-      remoteEnv: opts.remoteExecution ? opts.env : null,
+      remoteEnv: opts.remoteExecution ? envOverrides : null,
     })
       .then((target) => {
         const child = spawn(target.command, target.args, {

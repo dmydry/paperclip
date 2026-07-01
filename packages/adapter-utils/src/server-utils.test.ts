@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyPaperclipWorkspaceEnv,
   appendWithByteCap,
@@ -389,6 +389,10 @@ describe("adapter skill snapshots", () => {
 });
 
 describe("runChildProcess", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("does not arm a timeout when timeoutSec is 0", async () => {
     const result = await runChildProcess(
       randomUUID(),
@@ -406,6 +410,29 @@ describe("runChildProcess", () => {
     expect(result.exitCode).toBe(0);
     expect(result.timedOut).toBe(false);
     expect(result.stdout).toBe("done");
+  });
+
+  it("treats an empty env override as an inherited variable unset", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-openai-key");
+
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write(Object.prototype.hasOwnProperty.call(process.env, 'OPENAI_API_KEY') ? 'present' : 'absent');",
+      ],
+      {
+        cwd: process.cwd(),
+        env: { OPENAI_API_KEY: "" },
+        timeoutSec: 5,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("absent");
   });
 
   it("waits for onSpawn before sending stdin to the child", async () => {
