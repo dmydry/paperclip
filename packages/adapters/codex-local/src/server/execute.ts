@@ -37,6 +37,7 @@ import {
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
+  resolvePaperclipInstanceRootForAdapter,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
   parseCodexJsonl,
@@ -61,6 +62,33 @@ const TOKEN_DISCIPLINE_INSTRUCTIONS = `Token discipline rules (required):
 - When reading Paperclip issue comments, avoid dumping the full thread unless the task truly requires it; prefer latest relevant comments, concise summaries, and only the fields needed for the decision.
 - When checking production pages, prefer selector counts, extracted attributes, HTTP status, or short matched snippets. Do not print full HTML.
 - If a command may produce a large output, redirect it to an artifact file first, then print a short summary plus the file path.`;
+
+function resolveCodexLocalAgentHome(
+  env: NodeJS.ProcessEnv,
+  companyId: string,
+  agentId: string,
+): string {
+  const instanceRoot = resolvePaperclipInstanceRootForAdapter({
+    homeDir:
+      typeof env.PAPERCLIP_HOME === "string" && env.PAPERCLIP_HOME.trim().length > 0
+        ? env.PAPERCLIP_HOME.trim()
+        : undefined,
+    instanceId:
+      typeof env.PAPERCLIP_INSTANCE_ID === "string" && env.PAPERCLIP_INSTANCE_ID.trim().length > 0
+        ? env.PAPERCLIP_INSTANCE_ID.trim()
+        : undefined,
+    env,
+  });
+  return path.resolve(instanceRoot, "companies", companyId, "agents", agentId, "codex-home");
+}
+
+function isPaperclipManagedAgentCodexHome(
+  configuredHome: string | null,
+  agent: { companyId: string; id: string },
+): configuredHome is string {
+  if (!configuredHome) return false;
+  return path.resolve(configuredHome) === resolveCodexLocalAgentHome(process.env, agent.companyId, agent.id);
+}
 
 function stripCodexRolloutNoise(text: string): string {
   const parts = text.split(/\r?\n/);
@@ -341,6 +369,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
+  const configuredCodexHomeIsManaged = isPaperclipManagedAgentCodexHome(configuredCodexHome, agent);
   const codexSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = resolveCodexDesiredSkillNames(config, codexSkillEntries);
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
@@ -349,10 +378,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? envConfig.OPENAI_API_KEY.trim()
       : null;
   const preparedManagedCodexHome =
-    configuredCodexHome
+    configuredCodexHome && !configuredCodexHomeIsManaged
       ? null
       : await prepareManagedCodexHome(process.env, onLog, agent.companyId, {
           apiKey: configuredOpenAiApiKey,
+          targetHome: configuredCodexHomeIsManaged ? configuredCodexHome : null,
         });
   const defaultCodexHome = resolveManagedCodexHomeDir(process.env, agent.companyId);
   const effectiveCodexHome = configuredCodexHome ?? preparedManagedCodexHome ?? defaultCodexHome;
@@ -360,7 +390,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // Merge custom model providers (PAPERCLIP_CODEX_PROVIDERS) into the managed
   // CODEX_HOME's config.toml BEFORE the home is shipped to a remote execution
   // target, so both local and sandboxed Codex processes pick up the routing.
-  // An explicit env.CODEX_HOME override is treated as user-managed and skipped.
+  // A true explicit env.CODEX_HOME override is treated as user-managed and
+  // skipped. The Paperclip-assigned per-agent CODEX_HOME is still managed.
   const envConfigStrings = Object.fromEntries(
     Object.entries(envConfig).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -368,7 +399,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   );
   const preparedRuntimeConfig = await prepareCodexRuntimeConfig({
     env: envConfigStrings,
-    codexHome: configuredCodexHome ? null : effectiveCodexHome,
+    codexHome: configuredCodexHome && !configuredCodexHomeIsManaged ? null : effectiveCodexHome,
   });
   try {
     for (const note of preparedRuntimeConfig.notes) {

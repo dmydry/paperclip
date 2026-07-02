@@ -120,9 +120,12 @@ export async function prepareManagedCodexHome(
   env: NodeJS.ProcessEnv,
   onLog: AdapterExecutionContext["onLog"],
   companyId?: string,
-  options: { apiKey?: string | null } = {},
+  options: { apiKey?: string | null; targetHome?: string | null } = {},
 ): Promise<string> {
-  const targetHome = resolveManagedCodexHomeDir(env, companyId);
+  const configuredTargetHome = nonEmpty(options.targetHome ?? undefined);
+  const targetHome = configuredTargetHome
+    ? path.resolve(configuredTargetHome)
+    : resolveManagedCodexHomeDir(env, companyId);
   const apiKey = nonEmpty(options.apiKey ?? undefined);
 
   const sourceHome = resolveSharedCodexHomeDir(env);
