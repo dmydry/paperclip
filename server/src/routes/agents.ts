@@ -1195,9 +1195,6 @@ export function agentRoutes(
     } else {
       env.CODEX_HOME = codexLocalAgentHome(companyId, agentId);
     }
-    if (!Object.prototype.hasOwnProperty.call(env, "OPENAI_API_KEY")) {
-      env.OPENAI_API_KEY = "";
-    }
     return { ...adapterConfig, env };
   }
 
