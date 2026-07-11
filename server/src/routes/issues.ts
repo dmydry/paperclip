@@ -2008,7 +2008,10 @@ export function issueRoutes(
       action: "tasks:manage_active_checkouts",
       resource: { type: "issue", companyId, assigneeAgentId },
     });
-    return decision.allowed;
+    return decision.allowed && (
+      decision.reason === "allow_explicit_grant" ||
+      decision.reason === "allow_manager_chain"
+    );
   }
 
   async function assertAgentIssueMutationAllowed(
@@ -2053,8 +2056,11 @@ export function issueRoutes(
       }
       return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
     }
+    const peerMutationOverride = issue.assigneeAgentId && issue.assigneeAgentId !== actorAgentId
+      ? await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)
+      : false;
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:mutate");
-    if (!boundaryDecision.allowed) {
+    if (!boundaryDecision.allowed && !peerMutationOverride) {
       res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
       return false;
     }
@@ -2062,7 +2068,7 @@ export function issueRoutes(
       return true;
     }
     if (issue.assigneeAgentId !== actorAgentId) {
-      if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
+      if (peerMutationOverride) {
         return true;
       }
       if (issue.status === "in_progress") {

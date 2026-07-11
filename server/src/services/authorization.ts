@@ -1312,6 +1312,19 @@ export function authorizationService(db: Db) {
     }
 
     if (
+      input.action === "tasks:manage_active_checkouts" &&
+      input.resource.type === "issue" &&
+      input.resource.assigneeAgentId &&
+      await isManagerOf(companyId, actorAgentId, input.resource.assigneeAgentId)
+    ) {
+      return allow({
+        action: input.action,
+        reason: "allow_manager_chain",
+        explanation: "Allowed because the actor manages the issue assignee in the reporting chain.",
+      });
+    }
+
+    if (
       (input.action === "agents:create" ||
         input.action === "agent_config:read" ||
         input.action === "agent_config:update" ||
@@ -1322,19 +1335,6 @@ export function authorizationService(db: Db) {
         action: input.action,
         reason: "allow_legacy_agent_creator",
         explanation: "Allowed by legacy agent creator authority.",
-      });
-    }
-
-    if (
-      input.action === "tasks:manage_active_checkouts" &&
-      input.resource.type === "issue" &&
-      input.resource.assigneeAgentId &&
-      await isManagerOf(companyId, actorAgentId, input.resource.assigneeAgentId)
-    ) {
-      return allow({
-        action: input.action,
-        reason: "allow_manager_chain",
-        explanation: "Allowed because the actor manages the issue assignee in the reporting chain.",
       });
     }
 

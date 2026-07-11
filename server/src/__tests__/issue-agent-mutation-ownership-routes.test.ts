@@ -1333,18 +1333,16 @@ describe("agent issue mutation checkout ownership", () => {
 
   it("allows agents with the active-checkout management grant to mutate active checkouts", async () => {
     mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
-      allowed: input.action === "issue:mutate" || input.action === "tasks:manage_active_checkouts",
+      allowed: input.action === "tasks:manage_active_checkouts",
       action: input.action,
       reason:
-        input.action === "issue:mutate" || input.action === "tasks:manage_active_checkouts"
+        input.action === "tasks:manage_active_checkouts"
           ? "allow_explicit_grant"
           : "deny_missing_grant",
       explanation:
         input.action === "tasks:manage_active_checkouts"
           ? "Allowed by checkout management grant."
-          : input.action === "issue:mutate"
-            ? "Allowed by test boundary default."
-            : "Missing permission.",
+          : "Missing permission.",
     }));
 
     const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Managed update" });
@@ -1352,6 +1350,28 @@ describe("agent issue mutation checkout ownership", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).toHaveBeenCalled();
+  });
+
+  it("does not treat legacy agent-creator authority as a peer issue mutation override", async () => {
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: input.action === "tasks:manage_active_checkouts",
+      action: input.action,
+      reason:
+        input.action === "tasks:manage_active_checkouts"
+          ? "allow_legacy_agent_creator"
+          : "deny_missing_grant",
+      explanation:
+        input.action === "tasks:manage_active_checkouts"
+          ? "Allowed by legacy agent creator authority."
+          : "Missing permission.",
+    }));
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Legacy update" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Issue is outside this actor's authorization boundary");
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
   it.each([
