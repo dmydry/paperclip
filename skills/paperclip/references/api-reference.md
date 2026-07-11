@@ -715,7 +715,8 @@ Rules:
 - Use idempotency keys that include the target and version, for example `confirmation:${issueId}:plan:${latestRevisionId}`.
 - Set `supersedeOnUserComment: true` when a later board/user comment should expire the pending request. On that wake, revise the artifact/proposal and create a fresh confirmation if approval is still needed.
 - A pending interaction is an explicit waiting path. Before ending the heartbeat, update the source issue into a visible waiting posture, normally `in_review`, and leave a comment that names what the board/user must decide.
-- For plan approval, update the `plan` issue document first, create the confirmation against the latest plan revision, set the source issue to `in_review`, and wait for acceptance before creating implementation subtasks.
+- For plan approval, update the `plan` issue document first, create the confirmation against the latest plan revision, set the source issue to `in_review`, and wait for acceptance before materializing implementation subtasks.
+- Accepting a `request_confirmation` only records the decision and wakes the assignee. It does not create tasks. After a plan confirmation is accepted, use `GET /api/issues/{issueId}/accepted-plan-decompositions` to check prior materialization, then `POST /api/issues/{issueId}/accepted-plan-decompositions` with `acceptedPlanRevisionId` and the exact approved child list. For sprint backlog batches, set child `status` explicitly to `"backlog"`; assigned children without an explicit status default to `"todo"`.
 
 ### Checkbox confirmations
 

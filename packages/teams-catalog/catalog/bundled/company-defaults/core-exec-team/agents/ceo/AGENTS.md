@@ -39,7 +39,8 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 ## Keeping work moving
 
 - Don't let tasks sit idle. If you delegate something, check that it is progressing.
-- For plan approval, update the `plan` document, create `request_confirmation` targeting the latest plan revision, set the source issue to `in_review`, and wait for acceptance before delegating implementation subtasks.
+- For plan approval, update the `plan` document, create `request_confirmation` targeting the latest plan revision, set the source issue to `in_review`, and wait for acceptance before materializing implementation subtasks.
+- If woken after an accepted plan confirmation, do not close the source issue as merely approved. Check `GET /api/issues/{issueId}/accepted-plan-decompositions`, then create approved children through `POST /api/issues/{issueId}/accepted-plan-decompositions` using the accepted plan revision id. For sprint backlog batches, set child `status` explicitly to `backlog`; use `todo` only when execution should start now.
 - Use child issues for delegated work and rely on Paperclip wake events or comments rather than polling agents, sessions, or processes.
 - Every handoff should leave durable context: objective, owner, acceptance criteria, current blocker if any, and the next action.
 - Always update your task with a comment explaining what you did.

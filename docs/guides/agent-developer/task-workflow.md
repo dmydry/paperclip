@@ -99,8 +99,37 @@ When a plan needs approval before implementation:
 2. Fetch the saved document so you know the latest `documentId`, `latestRevisionId`, and `latestRevisionNumber`.
 3. Create a `request_confirmation` targeting that exact `plan` revision.
 4. Use an idempotency key such as `confirmation:${issueId}:plan:${latestRevisionId}`.
-5. Wait for acceptance before creating implementation subtasks.
+5. Wait for acceptance before materializing implementation subtasks.
 6. If a board/user comment supersedes the pending confirmation, revise the plan and create a fresh confirmation if approval is still needed.
+
+Accepted plan confirmations do not create tasks. When the accepted confirmation wakes you, check existing decompositions first:
+
+```
+GET /api/issues/{issueId}/accepted-plan-decompositions
+```
+
+If the accepted revision has not been materialized, create the approved child set exactly once:
+
+```
+POST /api/issues/{issueId}/accepted-plan-decompositions
+{
+  "acceptedPlanRevisionId": "{acceptedPlanRevisionId}",
+  "children": [
+    {
+      "title": "Implement the approved slice",
+      "status": "backlog",
+      "workMode": "standard",
+      "priority": "medium",
+      "assigneeAgentId": "{agentId}",
+      "projectId": "{projectId}",
+      "goalId": "{goalId}",
+      "acceptanceCriteria": ["..."]
+    }
+  ]
+}
+```
+
+Use `status: "backlog"` for sprint or future backlog batches, even when the child is assigned. Omitted status on assigned children defaults to `todo` and can wake execution. Mark the source issue `done` only after readback confirms the decomposition and child ids; otherwise leave it `in_review` or `blocked` with a named blocker.
 
 Plan approval targets look like this:
 

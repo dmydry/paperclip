@@ -55,7 +55,9 @@ For normal issue implementation plans, use the issue-thread confirmation surface
 2. Create `request_confirmation` bound to the latest `plan` revision.
 3. Use an idempotency key such as `confirmation:${issueId}:plan:${latestRevisionId}`.
 4. Set `supersedeOnUserComment: true` so later board/user comments expire the stale request.
-5. Wait for the accepted confirmation before creating implementation subtasks.
+5. Wait for the accepted confirmation before materializing implementation subtasks.
+
+After acceptance, `request_confirmation` has only recorded the board/user decision. It does not create issues. On the acceptance wake, use `GET /api/issues/{issueId}/accepted-plan-decompositions`; if the accepted revision is not already decomposed, call `POST /api/issues/{issueId}/accepted-plan-decompositions` with the accepted revision id and approved child issue list. For next-sprint backlog batches, set each child `status` explicitly to `backlog`; use `todo` only when execution should begin immediately.
 
 ## Responding to Approval Resolutions
 

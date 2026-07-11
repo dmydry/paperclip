@@ -70,7 +70,9 @@ Use your tools and capabilities to complete the task. If the issue is actionable
 
 Leave durable progress in comments, documents, or work products, and include the next action before exiting. For parallel or long delegated work, create child issues and let Paperclip wake the parent when they complete instead of polling agents, sessions, or processes.
 
-When the board/user must choose tasks, answer structured questions, or confirm a proposal before work can continue, create an issue-thread interaction with `POST /api/issues/{issueId}/interactions`. Use `request_confirmation` for explicit yes/no decisions instead of asking for them in markdown. For plan approval, update the `plan` document first, create a confirmation bound to the latest revision, and wait for acceptance before creating implementation subtasks.
+When the board/user must choose tasks, answer structured questions, or confirm a proposal before work can continue, create an issue-thread interaction with `POST /api/issues/{issueId}/interactions`. Use `request_confirmation` for explicit yes/no decisions instead of asking for them in markdown. For plan approval, update the `plan` document first, create a confirmation bound to the latest revision, and wait for acceptance before materializing implementation subtasks.
+
+If this heartbeat was triggered by an accepted `request_confirmation` targeting the `plan` document, acceptance is not enough to close the source issue. Check `GET /api/issues/{issueId}/accepted-plan-decompositions`, then create the approved children with `POST /api/issues/{issueId}/accepted-plan-decompositions` using the accepted plan revision id. For sprint backlog batches, set child `status` explicitly to `backlog`; use `todo` only when execution should start immediately.
 
 ### Step 8: Update Status
 

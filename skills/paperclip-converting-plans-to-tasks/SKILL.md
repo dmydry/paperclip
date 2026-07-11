@@ -16,6 +16,8 @@ A companion skill for turning a plan into executable Paperclip work. It does **n
 
 For the **mechanics** of recording a plan (issue document with key `plan`, comment links, approval gating, who to reassign back to), follow the _Planning_ section of the `paperclip` skill. This skill covers planning method, not the API surface.
 
+After a `request_confirmation` targeting the `plan` document is accepted, the acceptance is only a decision record. It does **not** create issues. If the accepted plan is supposed to become a backlog or execution batch, check existing decompositions with `GET /api/issues/{issueId}/accepted-plan-decompositions`, then materialize the approved child set with `POST /api/issues/{issueId}/accepted-plan-decompositions` and the accepted plan revision id. Use `status: "backlog"` for sprint or future backlog batches, even when tasks already have assignees; use `todo` only when execution should start immediately.
+
 ## When you're asked to plan
 
 - **Plan deeply.** Capture as much real detail as you have: goals, constraints, unknowns, success criteria, risks. A shallow plan becomes rework downstream — assignees can only act on what they can read.
@@ -34,6 +36,7 @@ For the **mechanics** of recording a plan (issue document with key `plan`, comme
 - [ ] Each issue's real blockers are declared via `blockedByIssueIds`.
 - [ ] Independent branches can start in parallel.
 - [ ] Gaps (missing skills, hires, decisions, external inputs) are surfaced, not hidden.
+- [ ] If this is an accepted plan, materialization route and child statuses are explicit: `backlog` for parked sprint backlog, `todo` for immediate execution.
 
 ## What this skill is not
 

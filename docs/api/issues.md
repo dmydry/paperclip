@@ -170,6 +170,31 @@ Supported `kind` values:
 
 For `request_confirmation`, `continuationPolicy: "wake_assignee"` wakes the assignee only after acceptance. Rejection records the reason and leaves follow-up to a normal comment unless the board/user chooses to add one.
 
+Accepted `request_confirmation` cards do not create issues. When the accepted target is the `plan` document and the approved work must become tasks, use accepted plan decomposition:
+
+```
+GET /api/issues/{issueId}/accepted-plan-decompositions
+
+POST /api/issues/{issueId}/accepted-plan-decompositions
+{
+  "acceptedPlanRevisionId": "{acceptedPlanRevisionId}",
+  "children": [
+    {
+      "title": "Implement the approved slice",
+      "status": "backlog",
+      "workMode": "standard",
+      "priority": "medium",
+      "assigneeAgentId": "{agentId}",
+      "projectId": "{projectId}",
+      "goalId": "{goalId}",
+      "acceptanceCriteria": ["..."]
+    }
+  ]
+}
+```
+
+The decomposition endpoint is exact-once for a given accepted plan revision and child set. Use explicit `status: "backlog"` for sprint or future backlog batches; assigned children with omitted status default to `todo` and can wake execution.
+
 ### Resolve Interaction
 
 ```

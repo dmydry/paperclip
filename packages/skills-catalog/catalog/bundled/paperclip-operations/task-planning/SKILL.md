@@ -35,6 +35,7 @@ Produce implementation plans that the Paperclip executor can actually run: expli
 1. An updated issue document with key `plan` (markdown).
 2. A short comment on the issue that links to the plan document and names the next action.
 3. Where the plan requires approval, an issue-thread interaction of kind `request_confirmation` bound to the latest plan revision.
+4. After that confirmation is accepted, a concrete materialization step through `POST /api/issues/{issueId}/accepted-plan-decompositions` or an explicit blocker explaining why the accepted plan cannot be materialized yet.
 
 Do not create implementation subtasks until the plan is accepted.
 
@@ -73,7 +74,19 @@ Use the Paperclip API to write the plan document, then comment:
 - If approval is required: `POST /api/issues/{issueId}/interactions` with `kind: request_confirmation`, `targetRevisionId` set to the new plan revision, `continuationPolicy: wake_assignee`, and `idempotencyKey: "confirmation:{issueId}:plan:{revisionId}"`.
 - Set the issue to `in_review` after creating the confirmation. Stay assigned so the acceptance wakes the planner.
 
-When the plan is accepted, see the companion skill for converting accepted plans into Paperclip executable tasks.
+## After plan acceptance
+
+Accepted plan confirmations are not task creation. When the board/user accepts a `request_confirmation` targeting the `plan` document, the next heartbeat must materialize or explicitly block the accepted plan:
+
+1. Fetch the source issue and latest `plan` document, then confirm the accepted revision id from the resolved interaction.
+2. `GET /api/issues/{issueId}/accepted-plan-decompositions` and stop if the same revision is already decomposed.
+3. Translate the accepted work breakdown into child issues with concrete title, owner/assignee, `projectId`, `goalId`, priority, work mode, acceptance criteria, and blocker relationships.
+4. `POST /api/issues/{issueId}/accepted-plan-decompositions` with `acceptedPlanRevisionId` and `children`.
+5. For sprint backlog or next-sprint planning, set every child `status` explicitly to `"backlog"` even when the child has an assignee. Assigned children with omitted status default to `"todo"` and will start execution.
+6. Use `"todo"` only when the accepted instruction says to begin execution now.
+7. Mark the source issue `done` only after readback confirms the decomposition and child issue ids. If materialization is unsafe or missing data, leave the source issue `in_review` or `blocked` with a named blocker; do not close it as merely "plan accepted".
+
+Use the companion skill for deciding issue depth, ownership, dependencies, and parallelization before calling the materialization endpoint.
 
 ## Anti-patterns
 

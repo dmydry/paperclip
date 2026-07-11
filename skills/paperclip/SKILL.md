@@ -32,9 +32,12 @@ Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli
 When you are debugging or operating a live authenticated Paperclip deployment outside a heartbeat:
 
 - Prefer the project/bootstrap skill for the exact host, cookie file, branch, and helper paths when one exists.
+- On Paper-01 owner/operator shells, prefer `paperclip-api` or the shared board-key helper before falling back to database reads. The approved helper is `/Users/dmydry/projects/paper/ops/codex-subscription-2/paperclip-api-key.sh`; source it, run `paperclip_resolve_api_key`, validate with `paperclip_api_preflight_board_key`, then call `paperclip_api_request GET "/api/issues/<ISSUE-ID>"`. The helper may read the private board key from `~/.paperclip/operator-board-api-key` (also linked under `/home/dmydry/.paperclip/operator-board-api-key`). Never print, copy, globally export, or store the raw key value.
+- A fresh Paper-01 board session cookie may be available at `~/.paperclip_cookie` (`/home/dmydry/.paperclip_cookie`). Build a `Cookie:` header from the file without printing it, verify the session first with `GET /api/auth/get-session`, then use it for board-user reads. Board-user `POST` / `PATCH` / `DELETE` requests also need trusted `Origin` and `Referer` headers matching the exact Paperclip base URL.
 - Verify session cookies first with `GET /api/auth/get-session` before using them for deeper API checks.
 - Board-user `GET` requests usually work with an explicit `Cookie:` header.
 - Board-user `POST` / `PATCH` / `DELETE` requests usually also need trusted `Origin` and `Referer` headers that match the exact Paperclip base URL.
+- If MCP shortcuts such as `paperclipMe` return `401 Agent authentication required` in a board/operator context, treat that as an agent-route mismatch. Use generic API requests, `paperclip-api`, the board-key helper, or the fresh cookie path instead of widening into database inspection.
 - For remote hosts, prefer non-interactive `ssh -T <host> '...'` for short checks and deploy steps.
 - If you patch the Paperclip server itself on a remote host, the safe default loop is:
   - patch locally
@@ -305,7 +308,7 @@ Four kinds are supported. Pick the smallest kind that fits the decision shape:
 
 | Kind                            | When to use                                                                                  | When **not** to use                                                                                |
 | ------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `request_confirmation`          | Single yes/no decision bound to a target (e.g. accept a plan revision, approve a launch).    | Multi-select choices, free-form answers, or proposing tasks the board can pick from.               |
+| `request_confirmation`          | Single yes/no decision bound to a target (e.g. accept a plan revision, approve a launch).    | Multi-select choices, free-form answers, or proposing tasks the board can pick from; accepting it does not create tasks. |
 | `request_checkbox_confirmation` | Board must select any subset of a known list (up to 200 options) and then confirm or reject. | Yes/no decisions (use `request_confirmation`), or proposing new tasks (use `suggest_tasks`).        |
 | `ask_user_questions`            | Short structured form: a handful of typed questions, each with answers/options/text.         | Selecting many items from a long list, or single accept/reject decisions.                          |
 | `suggest_tasks`                 | Proposing concrete tasks for the board to accept; accepted tasks become real subtasks.       | Asking the board to confirm a plan or arbitrary selection. Tasks are the unit; not arbitrary ids.  |
@@ -406,6 +409,7 @@ For commands, response fields, and MCP tools, read:
 - **Start actionable work before planning-only closure.** Do concrete work in the same heartbeat unless the task asks for a plan or review only.
 - **Leave a next action.** Every progress comment should make clear what is complete, what remains, and who owns the next step.
 - **Prefer child issues over polling.** Create bounded child issues for long or parallel delegated work and rely on Paperclip wake events or comments for completion.
+- **Use accepted-plan decomposition for approved plans.** After a plan confirmation is accepted, do not close the source issue as merely approved. Check existing decompositions and create the approved child set through `POST /api/issues/{issueId}/accepted-plan-decompositions`; use explicit `status: "backlog"` for sprint backlog batches.
 - **Preserve workspace continuity for follow-ups.** Child issues inherit execution workspace from `parentId` server-side. For non-child follow-ups on the same checkout/worktree, send `inheritExecutionWorkspaceFromIssueId` explicitly.
 - **Never cancel cross-team tasks.** Reassign to your manager with a comment.
 - **Use first-class blockers** (`blockedByIssueIds`) rather than free-text "blocked by X" comments.
@@ -491,9 +495,9 @@ If the issue identifier is available, prefer the document deep link over a plain
 
 If you're asked to make a plan, _do not mark the issue as done_. When the plan is ready for review, leave the issue in `in_review` and make the reviewer/decision path explicit. If the requester specifically asked to take the issue back, reassign it to that user; otherwise keep the assignee in place so the accepted confirmation can wake the right agent.
 
-If the plan needs explicit approval before implementation, update the `plan` document, create a `request_confirmation` issue-thread interaction bound to the latest plan revision, then update the source issue to `in_review` with a comment that links the plan and names the pending confirmation. This is a deliberate waiting path, not an abandoned productive run. Wait for acceptance before creating implementation subtasks. See `references/api-reference.md` for the interaction payload.
+If the plan needs explicit approval before implementation, update the `plan` document, create a `request_confirmation` issue-thread interaction bound to the latest plan revision, then update the source issue to `in_review` with a comment that links the plan and names the pending confirmation. This is a deliberate waiting path, not an abandoned productive run. See `references/api-reference.md` for the interaction payload.
 
-When asked to convert a plan into executable Paperclip tasks — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-converting-plans-to-tasks`.
+When a `request_confirmation` targeting the `plan` document is accepted, acceptance only records the decision and wakes the assignee. It does not create child issues. On the accepted-plan wake, read the accepted `plan` revision, check `GET /api/issues/{issueId}/accepted-plan-decompositions`, then create the approved children with `POST /api/issues/{issueId}/accepted-plan-decompositions`. Use the accepted plan revision id and the exact child set you intend to materialize. For sprint or future backlog planning, set each child explicitly to `"status": "backlog"` (even when it already has an assignee) so the tasks appear in backlog without waking execution. Use `"status": "todo"` only when the owner asked to start execution immediately. If you cannot safely materialize the accepted plan, leave the source issue open (`in_review` or `blocked`) with a first-class blocker; do not mark the planning issue `done`.
 
 When asked to convert a plan into executable Paperclip tasks — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-converting-plans-to-tasks`.
 
