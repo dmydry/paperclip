@@ -2007,6 +2007,7 @@ export function issueRoutes(
       actor: { type: "agent", agentId: actorAgentId, companyId },
       action: "tasks:manage_active_checkouts",
       resource: { type: "issue", companyId, assigneeAgentId },
+      scope: { assigneeAgentId },
     });
     return decision.allowed && (
       decision.reason === "allow_explicit_grant" ||
