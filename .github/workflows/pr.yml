@@ -38,7 +38,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
           run_install: false
 
       - name: Setup Node.js
@@ -105,7 +105,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8
@@ -165,7 +165,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8
@@ -224,7 +224,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8
@@ -274,7 +274,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8
@@ -308,7 +308,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8
@@ -362,7 +362,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 9.15.4
+          version: 11.17.0
 
       - name: Restore regenerated PR lockfile (if policy uploaded one)
         uses: actions/download-artifact@v8

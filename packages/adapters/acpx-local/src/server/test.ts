@@ -238,7 +238,7 @@ export async function testEnvironment(
       : `Node ${nodeVersion} does not satisfy ACPX's >=22.12.0 requirement.`,
     hint: nodeVersionMeetsMinimum(nodeVersion)
       ? undefined
-      : "Run acpx_local agents with Node >=22.12.0 or use claude_local/codex_local on Node 20.",
+      : "Upgrade this runtime to Node >=22.13.0 before using acpx_local.",
   });
 
   checks.push(resolvePackage("acpx"));

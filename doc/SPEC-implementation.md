@@ -985,7 +985,7 @@ Required UX behaviors:
 
 ## 15.1 Environment
 
-- Node 20+
+- Node 22.13+
 - `DATABASE_URL` optional
 - if unset, auto-use embedded PostgreSQL under `~/.paperclip/instances/default/db`
 

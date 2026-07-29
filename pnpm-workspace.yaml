@@ -12,3 +12,23 @@ packages:
   - server
   - ui
   - cli
+
+patchedDependencies:
+  embedded-postgres@18.1.0-beta.16: patches/embedded-postgres@18.1.0-beta.16.patch
+
+overrides:
+  rollup: ">=4.59.0"
+
+allowBuilds:
+  '@embedded-postgres/linux-x64': true
+  es5-ext: true
+  esbuild: true
+  sharp: true
+  sqlite3: true
+
+# Keep future dependency scripts blocked by default while allowing the reviewed
+# native/generated dependencies above.
+strictDepBuilds: false
+
+# Preserve the existing CI behavior for newly published dependency releases.
+minimumReleaseAge: 0

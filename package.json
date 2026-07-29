@@ -61,15 +61,8 @@
     "vitest": "^4.1.8"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13",
+    "pnpm": ">=11.17.0 <12"
   },
-  "packageManager": "pnpm@9.15.4",
-  "pnpm": {
-    "patchedDependencies": {
-      "embedded-postgres@18.1.0-beta.16": "patches/embedded-postgres@18.1.0-beta.16.patch"
-    },
-    "overrides": {
-      "rollup": ">=4.59.0"
-    }
-  }
+  "packageManager": "pnpm@11.17.0"
 }

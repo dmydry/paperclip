@@ -52,5 +52,5 @@ Core fields:
 
 Dependency decision:
 - acpx_local declares direct dependencies on acpx, @agentclientprotocol/claude-agent-acp, and @zed-industries/codex-acp so the built-in adapter has deterministic package resolution instead of relying on globally installed ACP commands.
-- ACPX currently requires Node >=22.12.0. Paperclip keeps the repo-wide Node >=20 engine and surfaces the stricter runtime prerequisite through acpx_local diagnostics.
+- ACPX currently requires Node >=22.12.0. Paperclip's repo-wide Node >=22.13 baseline satisfies that requirement; acpx_local still diagnoses standalone or misconfigured runtimes.
 `;
