@@ -1744,6 +1744,14 @@ export function authorizationService(db: Db) {
       if (taskBridgeDecision) return taskBridgeDecision;
     }
 
+    if (input.action === "issue:comment") {
+      return allow({
+        action: input.action,
+        reason: "allow_company_agent",
+        explanation: "Allowed because same-company agents may post issue comments.",
+      });
+    }
+
     const trustResolution = await resolveActorTrust({
       actorAgent,
       actor: input.actor,
