@@ -531,7 +531,9 @@ describe("CompanyEnvironments — test provider button", () => {
     await act(async () => {
       root!.render(renderCompanyEnvironments(queryClient));
     });
-    await flushReact();
+    await waitForAssertion(() => {
+      expect(testProviderButtons(container)).toHaveLength(1);
+    });
 
     await act(async () => {
       testProviderButtons(container)[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
