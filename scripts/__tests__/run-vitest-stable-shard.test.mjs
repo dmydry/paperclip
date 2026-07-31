@@ -30,6 +30,11 @@ function dryRunJson(args) {
 
 const SHARD_COUNT = 3;
 
+test("stable runs exclude compiled dist tests", () => {
+  const result = dryRunJson(["--mode", "general", "--group", "general-workspaces-b"]);
+  assert.deepEqual(result.stableVitestExcludePatterns, ["**/dist/**"]);
+});
+
 test("the general-server shards form a complete, non-overlapping partition", () => {
   const shards = Array.from({ length: SHARD_COUNT }, (_, index) =>
     dryRunJson(["--mode", "general", "--group", "general-server", "--shard-index", String(index), "--shard-count", String(SHARD_COUNT)]),

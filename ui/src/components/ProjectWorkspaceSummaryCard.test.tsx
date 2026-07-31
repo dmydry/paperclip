@@ -249,22 +249,23 @@ describe("ProjectWorkspaceSummaryCard", () => {
 
     await act(async () => {
       branchTextButton!.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(writeClipboard).toHaveBeenLastCalledWith(summary.branchName);
-    expect(branchTextButton?.nextElementSibling?.className).toContain("opacity-100");
+    await vi.waitFor(() => {
+      expect(branchTextButton?.nextElementSibling?.className).toContain("opacity-100");
+    });
 
     await act(async () => {
       pathTextButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(writeClipboard).toHaveBeenLastCalledWith(summary.cwd);
-    expect(pathTextButton?.nextElementSibling?.className).toContain("opacity-100");
+    await vi.waitFor(() => {
+      expect(pathTextButton?.nextElementSibling?.className).toContain("opacity-100");
+    });
 
     await act(async () => {
       branchIconButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       pathIconButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(writeClipboard).toHaveBeenCalledWith(summary.branchName);
     expect(writeClipboard).toHaveBeenCalledWith(summary.cwd);

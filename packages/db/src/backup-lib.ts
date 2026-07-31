@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 import { open as openFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import postgres from "postgres";
@@ -440,6 +441,32 @@ async function* readRestoreStatements(backupFile: string): AsyncGenerator<string
     stream.destroy();
     raw.destroy();
   }
+}
+
+function parseCopyRestoreBlock(statement: string): { command: string; dataLines: string[] } | null {
+  const lines = statement.split(/\r?\n/);
+  const copyLineIndex = lines.findIndex((line) => /^\s*COPY\b.*\bFROM\s+stdin\s*;\s*$/i.test(line));
+  if (copyLineIndex < 0) return null;
+
+  const unexpectedPrefix = lines
+    .slice(0, copyLineIndex)
+    .find((line) => line.trim().length > 0 && !line.trimStart().startsWith("--"));
+  if (unexpectedPrefix !== undefined) {
+    throw new Error("Fallback restore COPY block contains an unexpected SQL prefix");
+  }
+
+  let terminatorIndex = lines.length - 1;
+  while (terminatorIndex > copyLineIndex && lines[terminatorIndex]?.trim().length === 0) {
+    terminatorIndex -= 1;
+  }
+  if (lines[terminatorIndex] !== "\\.") {
+    throw new Error("Fallback restore COPY block is missing its \\. terminator");
+  }
+
+  return {
+    command: lines[copyLineIndex]!.replace(/;\s*$/, ""),
+    dataLines: lines.slice(copyLineIndex + 1, terminatorIndex),
+  };
 }
 
 export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes = DEFAULT_BACKUP_WRITE_BUFFER_BYTES) {
@@ -1009,6 +1036,13 @@ export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promi
   try {
     await sql`SELECT 1`;
     for await (const statement of readRestoreStatements(opts.backupFile)) {
+      const copyBlock = parseCopyRestoreBlock(statement);
+      if (copyBlock) {
+        const copyInput = Readable.from(copyBlock.dataLines.map((line) => `${line}\n`));
+        const copyOutput = await sql.unsafe(copyBlock.command).writable();
+        await pipeline(copyInput, copyOutput);
+        continue;
+      }
       await sql.unsafe(statement).execute();
     }
   } catch (error) {

@@ -67,6 +67,7 @@ const serializedServerVitestArgs = [
   "--no-file-parallelism",
   "--maxWorkers=1",
 ];
+const stableVitestExcludePatterns = ["**/dist/**"];
 
 function walk(dir) {
   const entries = readdirSync(dir);
@@ -265,7 +266,8 @@ function runVitest(args, label) {
   };
   mkdirSync(env.PAPERCLIP_HOME, { recursive: true });
   mkdirSync(env.TMPDIR, { recursive: true });
-  const result = spawnSync("pnpm", ["exec", "vitest", "run", ...args], {
+  const excludeArgs = stableVitestExcludePatterns.flatMap((pattern) => ["--exclude", pattern]);
+  const result = spawnSync("pnpm", ["exec", "vitest", "run", ...args, ...excludeArgs], {
     cwd: repoRoot,
     env,
     stdio: "inherit",
@@ -400,6 +402,7 @@ if (options.dryRun) {
         shardCount: options.shardCount,
         group: options.group,
         availableGeneralGroups: generalGroupNames,
+        stableVitestExcludePatterns,
         serializedSuiteCount: routeTests.length,
         selectedSerializedSuites: serializedSuites.map((routeTest) => routeTest.repoPath),
         generalServerSuiteCount: generalServerTestFiles.length,

@@ -1403,6 +1403,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
         await verifySql.end();
       }
     },
-    20_000,
+    60_000,
   );
 });

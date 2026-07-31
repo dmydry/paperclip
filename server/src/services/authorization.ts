@@ -1745,6 +1745,19 @@ export function authorizationService(db: Db) {
     }
 
     if (input.action === "issue:comment") {
+      const directParentReportTarget = await isDirectParentReportTarget({
+        actor: input.actor,
+        actorAgentId,
+        companyId,
+        resource: input.resource,
+      });
+      if (directParentReportTarget) {
+        return allow({
+          action: input.action,
+          reason: "allow_direct_parent_report",
+          explanation: "Allowed because the target is the current run issue's direct parent.",
+        });
+      }
       return allow({
         action: input.action,
         reason: "allow_company_agent",
@@ -1758,20 +1771,12 @@ export function authorizationService(db: Db) {
       companyId,
       resource: input.resource,
     });
-    const directParentReportTarget =
-      input.action === "issue:comment" &&
-      await isDirectParentReportTarget({
-        actor: input.actor,
-        actorAgentId,
-        companyId,
-        resource: input.resource,
-      });
     const lowTrustDecision = await decideLowTrustAccess({
       actorAgentId,
       action: input.action,
       resource: input.resource,
       resolution: trustResolution,
-      directParentReportTarget,
+      directParentReportTarget: false,
     });
     if (lowTrustDecision) {
       if (!lowTrustDecision.allowed) return lowTrustDecision;
@@ -1787,19 +1792,6 @@ export function authorizationService(db: Db) {
         return lowTrustDecision;
       }
     }
-
-    if (
-      trustResolution.kind === "standard" &&
-      input.action === "issue:comment" &&
-      directParentReportTarget
-    ) {
-      return allow({
-        action: input.action,
-        reason: "allow_direct_parent_report",
-        explanation: "Allowed because the target is the current run issue's direct parent under the standard trust preset.",
-      });
-    }
-
 
     if (input.action === "inbox:manage") {
       if (!isSimpleAssignableAgentStatus(actorAgent.status)) {

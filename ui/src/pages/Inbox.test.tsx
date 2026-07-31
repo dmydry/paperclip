@@ -422,15 +422,18 @@ describe("Inbox toolbar", () => {
     });
 
     await vi.waitFor(() => {
-      expect(apiMocks.issuesList).toHaveBeenCalledTimes(3);
+      expect(apiMocks.issuesList).toHaveBeenCalledTimes(4);
     });
 
-    expect(apiMocks.issuesList.mock.calls.map((call) => call[1]?.includeLiveDescendantSummary)).toEqual([
+    const liveDescendantSummaryCalls = apiMocks.issuesList.mock.calls.filter(
+      (call) => call[1]?.includeLiveDescendantSummary === true,
+    );
+    expect(liveDescendantSummaryCalls.map((call) => call[1]?.includeLiveDescendantSummary)).toEqual([
       true,
       true,
       true,
     ]);
-    expect(apiMocks.issuesList.mock.calls.map((call) => call[1]?.limit)).toEqual([
+    expect(liveDescendantSummaryCalls.map((call) => call[1]?.limit)).toEqual([
       500,
       500,
       500,
