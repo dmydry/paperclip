@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { buildSandboxNpmInstallCommand } from "@paperclipai/adapter-utils";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { ServerAdapterModule } from "../adapters/index.js";
 
 import {
@@ -33,6 +36,28 @@ const externalAdapter: ServerAdapterModule = {
   models: [{ id: "external-model", label: "External Model" }],
   supportsLocalAgentJwt: false,
 };
+
+async function writeFakeCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+const payload = {
+  codexHome: process.env.CODEX_HOME || null,
+  openAiApiKey: Object.prototype.hasOwnProperty.call(process.env, "OPENAI_API_KEY")
+    ? process.env.OPENAI_API_KEY
+    : null,
+};
+if (capturePath) {
+  fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+}
+console.log(JSON.stringify({ type: "thread.started", thread_id: "subscription-2-session" }));
+console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "ok" } }));
+console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
 
 describe("server adapter registry", () => {
   beforeEach(() => {
@@ -301,6 +326,86 @@ describe("server adapter registry", () => {
       }),
     ]);
     await expect(listAdapterModelProfiles("pi_local")).resolves.toEqual([]);
+  });
+
+  it("codex_subscription_2_local blocks host OPENAI_API_KEY while using the subscription-2 Codex home", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-subscription-2-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const subscription2Home = path.join(root, "subscription-2-home");
+
+    const previousSubscription2Home = process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME;
+    const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+
+    try {
+      await fs.mkdir(workspace, { recursive: true });
+      await fs.mkdir(subscription2Home, { recursive: true });
+      await fs.writeFile(
+        path.join(subscription2Home, "auth.json"),
+        JSON.stringify({
+          tokens: {
+            account_id: "acct-subscription-2",
+            id_token: "id-token",
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+          },
+        }) + "\n",
+        "utf8",
+      );
+      await writeFakeCodexCommand(commandPath);
+
+      process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME = subscription2Home;
+      process.env.OPENAI_API_KEY = "sk-host-should-not-leak";
+
+      const adapter = findActiveServerAdapter("codex_subscription_2_local");
+      expect(adapter).not.toBeNull();
+
+      const result = await adapter!.execute({
+        runId: "run-subscription-2",
+        agent: {
+          id: "agent-subscription-2",
+          companyId: "company-1",
+          name: "Subscription 2 Codex",
+          adapterType: "codex_subscription_2_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          engine: "cli",
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        codexHome: string | null;
+        openAiApiKey: string | null;
+      };
+      expect(capture.codexHome).toBe(subscription2Home);
+      expect(capture.openAiApiKey).toBe("");
+    } finally {
+      if (previousSubscription2Home === undefined) delete process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME;
+      else process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME = previousSubscription2Home;
+      if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("wraps built-in npm runtime installs with the sandbox-aware install helper", () => {

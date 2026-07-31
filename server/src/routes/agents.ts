@@ -1324,11 +1324,14 @@ export function agentRoutes(
     adapterType: string | null | undefined,
     adapterConfig: Record<string, unknown>,
   ): Record<string, unknown> {
-    if (adapterType !== "codex_local") return adapterConfig;
+    if (adapterType !== "codex_local" && adapterType !== "codex_subscription_2_local") return adapterConfig;
     const existingEnv = asRecord(adapterConfig.env) ?? {};
     const nextEnv: Record<string, unknown> = { ...existingEnv };
     if (!codexLocalEnvKeyConfigured(nextEnv.OPENAI_API_KEY)) {
       nextEnv.OPENAI_API_KEY = "";
+    }
+    if (adapterType === "codex_subscription_2_local") {
+      return { ...adapterConfig, env: nextEnv };
     }
     if (!codexLocalEnvKeyConfigured(existingEnv.OPENAI_API_KEY)) {
       return { ...adapterConfig, env: nextEnv };

@@ -215,15 +215,23 @@ function resolveCodexSubscription2Home(env: NodeJS.ProcessEnv = process.env): st
   return path.resolve(instanceRoot, "codex-homes", "subscription-2");
 }
 
-function withCodexSubscription2Home(config: Record<string, unknown>): Record<string, unknown> {
+function hasOwnEnvValue(env: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(env, key);
+}
+
+function withCodexSubscription2Defaults(config: Record<string, unknown>): Record<string, unknown> {
   const env = readRecord(config.env);
   const existingCodexHome = readPlainEnvValue(env.CODEX_HOME);
+  const nextEnv: Record<string, unknown> = {
+    ...env,
+    CODEX_HOME: existingCodexHome ?? resolveCodexSubscription2Home(),
+  };
+  if (!hasOwnEnvValue(env, "OPENAI_API_KEY")) {
+    nextEnv.OPENAI_API_KEY = "";
+  }
   return {
     ...config,
-    env: {
-      ...env,
-      CODEX_HOME: existingCodexHome ?? resolveCodexSubscription2Home(),
-    },
+    env: nextEnv,
   };
 }
 
@@ -355,30 +363,30 @@ const codexSubscription2LocalAdapter: ServerAdapterModule = {
   ...codexLocalAdapter,
   type: CODEX_SUBSCRIPTION_2_ADAPTER_TYPE,
   execute: (ctx) => {
-    const config = withCodexSubscription2Home(ctx.config);
+    const config = withCodexSubscription2Defaults(ctx.config);
     return codexExecute({
       ...ctx,
       config,
       agent: {
         ...ctx.agent,
-        adapterConfig: withCodexSubscription2Home(readRecord(ctx.agent.adapterConfig)),
+        adapterConfig: withCodexSubscription2Defaults(readRecord(ctx.agent.adapterConfig)),
       },
     });
   },
   testEnvironment: (ctx) =>
     codexTestEnvironment({
       ...ctx,
-      config: withCodexSubscription2Home(ctx.config),
+      config: withCodexSubscription2Defaults(ctx.config),
     }),
   listSkills: async (ctx) =>
     mapSkillSnapshotAdapterType(await listCodexSkills({
       ...ctx,
-      config: withCodexSubscription2Home(ctx.config),
+      config: withCodexSubscription2Defaults(ctx.config),
     })),
   syncSkills: async (ctx, desiredSkills) =>
     mapSkillSnapshotAdapterType(await syncCodexSkills({
       ...ctx,
-      config: withCodexSubscription2Home(ctx.config),
+      config: withCodexSubscription2Defaults(ctx.config),
     }, desiredSkills)),
   sessionManagement: getAdapterSessionManagement("codex_local") ?? undefined,
   modelProfiles: codexSubscription2ModelProfiles,
