@@ -1,3 +1,5 @@
+<!-- Write all pull request text in Simplified Technical English (ASD-STE100): short sentences, one instruction per sentence, simple approved vocabulary, and the active voice. -->
+
 ## Thinking Path
 
 <!--
@@ -49,7 +51,7 @@
 
 <!--
   How can a reviewer confirm this works? Include test commands, manual
-  steps, or both. For UI changes, include before/after screenshots.
+  steps, or both.
 -->
 
 -
@@ -91,7 +93,6 @@
 - [ ] My branch name describes the change (e.g. `docs/...`, `fix/...`) and contains no internal Paperclip ticket id or instance-derived details
 - [ ] I have run tests locally and they pass
 - [ ] I have added or updated tests where applicable
-- [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
 - [ ] All Paperclip CI gates are green

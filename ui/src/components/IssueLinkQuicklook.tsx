@@ -8,7 +8,7 @@ import { createIssueDetailPath, withIssueDetailHeaderSeed } from "@/lib/issueDet
 import {
   getIssueDetailQueryOptions,
   ISSUE_DETAIL_STALE_TIME_MS,
-  prefetchIssueDetail,
+  prefetchIssueDetailForNavigation,
 } from "@/lib/issueDetailCache";
 import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
@@ -64,6 +64,18 @@ function useIsQuicklookOpen(id: symbol) {
  *  as the pointer crosses cards on its way somewhere else. */
 const QUICKLOOK_OPEN_DELAY_MS = 120;
 
+export type IssueQuicklookIssue = Pick<Issue, "id" | "title" | "updatedAt"> & {
+  identifier?: string | null;
+  status: string;
+  priority: string;
+  description?: string | null;
+  blockerAttention?: Issue["blockerAttention"];
+  projectId?: string | null;
+  project?: { name?: string | null } | null;
+  originKind?: string;
+  originId?: string | null;
+};
+
 function summarizeIssueDescription(description: string | null | undefined) {
   if (!description) return null;
   const summary = description
@@ -83,7 +95,7 @@ export function IssueQuicklookCard({
   linkState,
   compact = false,
 }: {
-  issue: Issue;
+  issue: IssueQuicklookIssue;
   linkTo: RouterDom.To;
   linkState?: unknown;
   compact?: boolean;
@@ -197,7 +209,7 @@ export const IssueLinkQuicklook = React.forwardRef<
 
   const detailPath = createIssueDetailPath(issuePathId);
   const handlePrefetch = React.useCallback(() => {
-    void prefetchIssueDetail(queryClient, issuePathId, { issue: issuePrefetch });
+    void prefetchIssueDetailForNavigation(queryClient, issuePathId, { issue: issuePrefetch });
   }, [issuePathId, issuePrefetch, queryClient]);
   const link = (
     <RouterDom.Link

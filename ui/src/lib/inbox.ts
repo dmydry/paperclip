@@ -11,6 +11,7 @@ import {
   defaultIssueFilterState,
   normalizeIssueFilterState,
   type IssueFilterState,
+  type IssueFilterWorkspaceContext,
 } from "./issue-filters";
 import { formatAssigneeUserLabel } from "./assignees";
 
@@ -39,6 +40,7 @@ export const inboxIssueColumns = [
   "status",
   "id",
   "assignee",
+  "kickedOffBy",
   "project",
   "workspace",
   "parent",
@@ -462,6 +464,7 @@ export function getInboxSearchSupplementIssues({
   currentUserId,
   enableRoutineVisibilityFilter = false,
   liveIssueIds,
+  issueFilterContext = {},
 }: {
   query: string;
   filteredWorkItems: InboxWorkItem[];
@@ -471,6 +474,7 @@ export function getInboxSearchSupplementIssues({
   currentUserId?: string | null;
   enableRoutineVisibilityFilter?: boolean;
   liveIssueIds?: ReadonlySet<string>;
+  issueFilterContext?: IssueFilterWorkspaceContext;
 }): Issue[] {
   const normalizedQuery = query.trim();
   if (!normalizedQuery) return [];
@@ -480,7 +484,14 @@ export function getInboxSearchSupplementIssues({
       .map((item) => item.issue.id),
     ...archivedSearchIssues.map((issue) => issue.id),
   ]);
-  return applyIssueFilters(remoteIssues, issueFilters, currentUserId, enableRoutineVisibilityFilter, liveIssueIds)
+  return applyIssueFilters(
+    remoteIssues,
+    issueFilters,
+    currentUserId,
+    enableRoutineVisibilityFilter,
+    liveIssueIds,
+    issueFilterContext,
+  )
     .filter((issue) => !visibleIssueIds.has(issue.id));
 }
 
@@ -1216,20 +1227,23 @@ export function computeInboxBadgeData({
   joinRequests,
   dashboard,
   heartbeatRuns,
-  unreadTouchedIssues,
+  mineIssues,
   dismissedAlerts,
   dismissedAtByKey,
+  currentUserId,
 }: {
   approvals: Approval[];
   joinRequests: JoinRequest[];
   dashboard: DashboardSummary | undefined;
   heartbeatRuns: HeartbeatRun[];
-  unreadTouchedIssues: Issue[];
+  mineIssues: Issue[];
   dismissedAlerts: Set<string>;
   dismissedAtByKey: ReadonlyMap<string, number>;
+  currentUserId?: string | null;
 }): InboxBadgeData {
   const actionableApprovals = approvals.filter(
     (approval) =>
+      isApprovalVisibleInMine(approval, currentUserId) &&
       ACTIONABLE_APPROVAL_STATUSES.has(approval.status) &&
       !isInboxEntityDismissed(dismissedAtByKey, `approval:${approval.id}`, approval.updatedAt),
   ).length;
@@ -1239,7 +1253,7 @@ export function computeInboxBadgeData({
   const visibleJoinRequests = joinRequests.filter(
     (jr) => !isInboxEntityDismissed(dismissedAtByKey, `join:${jr.id}`, jr.updatedAt ?? jr.createdAt),
   ).length;
-  const visibleUnreadTouchedIssues = unreadTouchedIssues.filter((issue) => issue.isUnreadForMe).length;
+  const visibleMineIssues = mineIssues.filter((issue) => issue.isUnreadForMe).length;
   const agentErrorCount = dashboard?.agents.error ?? 0;
   const monthBudgetCents = dashboard?.costs.monthBudgetCents ?? 0;
   const monthUtilizationPercent = dashboard?.costs.monthUtilizationPercent ?? 0;
@@ -1254,11 +1268,12 @@ export function computeInboxBadgeData({
   const alerts = Number(showAggregateAgentError) + Number(showBudgetAlert);
 
   return {
-    inbox: actionableApprovals + visibleJoinRequests + failedRuns + visibleUnreadTouchedIssues + alerts,
+    // The inbox badge reflects personal/actionable work, not company-wide health alerts.
+    inbox: actionableApprovals + visibleJoinRequests + failedRuns + visibleMineIssues,
     approvals: actionableApprovals,
     failedRuns,
     joinRequests: visibleJoinRequests,
-    unreadTouchedIssues: visibleUnreadTouchedIssues,
+    unreadTouchedIssues: visibleMineIssues,
     alerts,
   };
 }

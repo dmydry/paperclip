@@ -4,6 +4,7 @@ import {
   currentUserAssigneeOption,
   formatAssigneeUserLabel,
   isAssigneeFilterSelected,
+  formatUserLabel,
   parseAssigneeValue,
   suggestedCommentAssigneeValue,
   toggleAssigneeFilterSelection,
@@ -79,6 +80,12 @@ describe("assignee selection helpers", () => {
     expect(
       toggleAssigneeFilterSelection([], { assigneeUserId: "user-123" }),
     ).toEqual(["user:user-123"]);
+  });
+
+  it("formats actual user labels without current-user substitution", () => {
+    expect(formatUserLabel("user-1", new Map([["user-1", "Dotta"]]))).toBe("Dotta");
+    expect(formatUserLabel("user-1", new Map([["user-2", "Someone Else"]]))).toBe("user-");
+    expect(formatUserLabel("local-board")).toBe("Board");
   });
 
   it("suggests the last non-me commenter without changing the actual assignee encoding", () => {

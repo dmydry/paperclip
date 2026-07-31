@@ -86,7 +86,7 @@ Accepted plan confirmations are not task creation. When the board/user accepts a
 6. Use `"todo"` only when the accepted instruction says to begin execution now.
 7. Mark the source issue `done` only after readback confirms the decomposition and child issue ids. If materialization is unsafe or missing data, leave the source issue `in_review` or `blocked` with a named blocker; do not close it as merely "plan accepted".
 
-Use the companion skill for deciding issue depth, ownership, dependencies, and parallelization before calling the materialization endpoint.
+Use the companion skill for deciding issue depth, ownership, dependencies, and parallelization before calling the materialization endpoint. Key requirements covered there: produce a compact task matrix (task, owner, initial status, blockers); encode every hard dependency as `blockedByIssueIds` — parent/child nesting alone does not block execution; and verify the created issue graph before closing the source planning issue.
 
 ## Anti-patterns
 

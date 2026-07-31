@@ -3,6 +3,7 @@ import {
   redactHomePathUserSegmentsInValue,
   type TranscriptEntry,
 } from "@paperclipai/adapter-utils";
+import { parseAcpxStdoutLine } from "@paperclipai/adapter-utils/acpx-engine/ui";
 
 function safeJsonParse(text: string): unknown {
   try {
@@ -253,6 +254,9 @@ export function parseCodexStdoutLine(line: string, ts: string): TranscriptEntry[
   }
 
   const type = asString(parsed.type);
+  if (type.startsWith("acpx.")) {
+    return parseAcpxStdoutLine(line, ts);
+  }
 
   if (type === "thread.started") {
     const threadId = asString(parsed.thread_id);
