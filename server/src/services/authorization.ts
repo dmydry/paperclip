@@ -1744,24 +1744,20 @@ export function authorizationService(db: Db) {
       if (taskBridgeDecision) return taskBridgeDecision;
     }
 
+    let directParentReportTarget = false;
     if (input.action === "issue:comment") {
-      const directParentReportTarget = await isDirectParentReportTarget({
+      if (!input.actor.runId) {
+        return allow({
+          action: input.action,
+          reason: "allow_company_agent",
+          explanation: "Allowed because same-company agents may post issue comments.",
+        });
+      }
+      directParentReportTarget = await isDirectParentReportTarget({
         actor: input.actor,
         actorAgentId,
         companyId,
         resource: input.resource,
-      });
-      if (directParentReportTarget) {
-        return allow({
-          action: input.action,
-          reason: "allow_direct_parent_report",
-          explanation: "Allowed because the target is the current run issue's direct parent.",
-        });
-      }
-      return allow({
-        action: input.action,
-        reason: "allow_company_agent",
-        explanation: "Allowed because same-company agents may post issue comments.",
       });
     }
 
@@ -1776,7 +1772,7 @@ export function authorizationService(db: Db) {
       action: input.action,
       resource: input.resource,
       resolution: trustResolution,
-      directParentReportTarget: false,
+      directParentReportTarget,
     });
     if (lowTrustDecision) {
       if (!lowTrustDecision.allowed) return lowTrustDecision;
@@ -1784,6 +1780,7 @@ export function authorizationService(db: Db) {
         input.action === "agent:read" ||
         input.action === "agent:wake" ||
         input.action === "company_scope:read" ||
+        input.action === "issue:comment" ||
         input.action === "issue:read" ||
         input.action === "project:read" ||
         input.action === "runtime:manage" ||
@@ -1791,6 +1788,18 @@ export function authorizationService(db: Db) {
       ) {
         return lowTrustDecision;
       }
+    }
+
+    if (
+      trustResolution.kind === "standard" &&
+      input.action === "issue:comment" &&
+      directParentReportTarget
+    ) {
+      return allow({
+        action: input.action,
+        reason: "allow_direct_parent_report",
+        explanation: "Allowed because the target is the current run issue's direct parent under the standard trust preset.",
+      });
     }
 
     if (input.action === "inbox:manage") {
