@@ -32,9 +32,10 @@ Nothing in this directory applies live configuration. The apply boundary is:
 - Assert that the three externally sourced routines still use
   `activityGatePolicy: always`; do not change their schedules or descriptions.
 
-Paperclip's runtime coordination skill is injected by the adapter when needed.
-It is intentionally absent from most explicit role bundles. The explicit sets
-contain only role-specific company/catalog skills.
+Every after-state bundle explicitly retains the canonical
+`paperclipai/paperclip/paperclip` coordination skill. The Codex adapter mounts
+only explicitly desired skills, so this core runtime capability is a required
+baseline in addition to each role's narrow company/catalog bundle.
 
 The company skill-mutation policy covers the eight canonical library mutation
 actions only. It does not remove agent runtime use or desired-skill sync access.

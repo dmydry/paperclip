@@ -82,6 +82,26 @@ class BaliBikeHouseOverlayTests(unittest.TestCase):
                     set(agent["after"]["desiredSkills"]) & overlay.BANNED_AFTER_SKILLS
                 )
 
+    def test_all_after_bundles_include_core_coordination_skill(self) -> None:
+        for agent in self.config["agents"]:
+            with self.subTest(agent=agent["name"]):
+                self.assertIn(
+                    overlay.CORE_COORDINATION_SKILL,
+                    agent["after"]["desiredSkills"],
+                )
+
+    def test_validator_rejects_missing_core_coordination_skill(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"][0]["after"]["desiredSkills"].remove(
+            overlay.CORE_COORDINATION_SKILL
+        )
+
+        with self.assertRaisesRegex(
+            overlay.ValidationError,
+            "omits the core Paperclip coordination skill",
+        ):
+            overlay.validate(config)
+
     def test_content_and_communications_role_bundles_are_exact(self) -> None:
         agents = {agent["name"]: agent for agent in self.config["agents"]}
         for name, expected in overlay.ROLE_EXCLUSIVE_AFTER.items():
@@ -114,6 +134,7 @@ class BaliBikeHouseOverlayTests(unittest.TestCase):
             if agent["name"] == "Communications Manager"
         )
         communications_manager["after"]["desiredSkills"] = [
+            overlay.CORE_COORDINATION_SKILL,
             "balibikehouse-native-content-localization",
             "balibikehouse-content-claims-quality",
         ]

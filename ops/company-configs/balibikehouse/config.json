@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "paperclipRelease": "2026.609",
   "sourceBaseSha": "1f1ba2b98734cba8ba2d7ffa1ecd673699329f7d",
+  "requiredRuntimeSkills": [
+    "paperclipai/paperclip/paperclip"
+  ],
   "company": {
     "id": "35c98cd5-9fb1-423e-912c-51a6c7767cad",
     "issuePrefix": "BAL",
@@ -89,6 +92,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-repo-workflow",
           "balibikehouse-code-task-templates",
           "balibikehouse-backend-reference",
@@ -104,6 +108,7 @@
       "before": { "desiredSkills": [] },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "task-planning",
           "balibikehouse-commercial-governance"
         ]
@@ -116,6 +121,7 @@
       "before": { "desiredSkills": [] },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "task-planning",
           "balibikehouse-commercial-governance",
           "balibikehouse-analytics-references",
@@ -138,6 +144,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-communications-intelligence"
         ]
       }
@@ -149,6 +156,7 @@
       "before": { "desiredSkills": [] },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "task-planning",
           "balibikehouse-commercial-governance"
         ]
@@ -161,6 +169,7 @@
       "before": { "desiredSkills": [] },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-native-content-localization"
         ]
       }
@@ -172,6 +181,7 @@
       "before": { "desiredSkills": [] },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "qa-acceptance",
           "balibikehouse-content-claims-quality"
         ]
@@ -197,6 +207,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-analytics-references",
           "balibikehouse-seo-trends-scan"
         ]
@@ -221,6 +232,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-repo-workflow",
           "balibikehouse-code-task-templates",
           "balibikehouse-frontend-e2e",
@@ -245,6 +257,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "task-planning",
           "paperclip-converting-plans-to-tasks",
           "balibikehouse-commercial-governance",
@@ -269,6 +282,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-bugsink-triage",
           "balibikehouse-code-task-templates",
           "balibikehouse-repo-workflow",
@@ -298,6 +312,7 @@
       },
       "after": {
         "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
           "balibikehouse-repo-workflow",
           "balibikehouse-code-task-templates",
           "balibikehouse-frontend-e2e",

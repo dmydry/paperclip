@@ -12,6 +12,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
+CORE_COORDINATION_SKILL = "paperclipai/paperclip/paperclip"
 
 CANONICAL_ACTIONS = {
     "skills.create",
@@ -67,16 +68,20 @@ WORKFLOW_MARKERS = {
 
 ROLE_EXCLUSIVE_AFTER = {
     "Communications Manager": (
+        CORE_COORDINATION_SKILL,
         "balibikehouse-communications-intelligence",
     ),
     "Content Lead": (
+        CORE_COORDINATION_SKILL,
         "task-planning",
         "balibikehouse-commercial-governance",
     ),
     "Content Operator": (
+        CORE_COORDINATION_SKILL,
         "balibikehouse-native-content-localization",
     ),
     "Content QA-QC": (
+        CORE_COORDINATION_SKILL,
         "qa-acceptance",
         "balibikehouse-content-claims-quality",
     ),
@@ -128,6 +133,7 @@ def _library_slugs(config: dict[str, Any]) -> set[str]:
         *(entry["slug"] for entry in library["managedUpdate"]),
         *(entry["slug"] for entry in library["managedCreate"]),
         *library["existingSkillSlugs"],
+        *config["requiredRuntimeSkills"],
     }
 
 
@@ -177,6 +183,10 @@ def validate(config: dict[str, Any]) -> None:
         re.fullmatch(r"[0-9a-f]{40}", config.get("sourceBaseSha", "")) is not None,
         "sourceBaseSha must be a full git SHA",
     )
+    _require(
+        config.get("requiredRuntimeSkills") == [CORE_COORDINATION_SKILL],
+        "requiredRuntimeSkills must contain exactly the core Paperclip coordination skill",
+    )
 
     agents = config.get("agents", [])
     _require(len(agents) == 12, "manifest must contain exactly 12 agents")
@@ -201,6 +211,10 @@ def validate(config: dict[str, Any]) -> None:
     for agent in agents:
         after = agent.get("after", {}).get("desiredSkills", [])
         _require(after, f"{agent['name']} has an empty after set")
+        _require(
+            CORE_COORDINATION_SKILL in after,
+            f"{agent['name']} omits the core Paperclip coordination skill",
+        )
         _require(len(after) == len(set(after)), f"{agent['name']} has duplicate skills")
         unresolved = set(after) - available
         _require(not unresolved, f"{agent['name']} has unresolved skills: {sorted(unresolved)}")
@@ -326,6 +340,10 @@ def dry_run_summary(config: dict[str, Any]) -> dict[str, Any]:
             "emptyBefore": sorted(EXPECTED_EMPTY_BEFORE),
             "nonemptyAfter": sum(
                 bool(agent["after"]["desiredSkills"]) for agent in config["agents"]
+            ),
+            "coreCoordinationCoverage": sum(
+                CORE_COORDINATION_SKILL in agent["after"]["desiredSkills"]
+                for agent in config["agents"]
             ),
         },
         "policy": {
