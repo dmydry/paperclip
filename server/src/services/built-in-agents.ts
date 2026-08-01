@@ -19,6 +19,7 @@ import {
   withBuiltInAgentMarker,
 } from "./built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { routineService } from "./routines.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
@@ -1945,7 +1946,11 @@ export function builtInAgentService(db: Db) {
     const company = await ensureCompany(companyId);
     let autoEnsured = 0;
     let pendingApprovals = 0;
-    for (const definition of DEFINITIONS.filter((entry) => entry.bundle)) {
+    const experimental = await instanceSettingsService(db).getExperimental();
+    const bundledDefinitions = experimental.enableBuiltInAgents
+      ? DEFINITIONS.filter((entry) => entry.bundle)
+      : [];
+    for (const definition of bundledDefinitions) {
       if (company.requireBoardApprovalForNewAgents) {
         const result = await provision(companyId, definition.key);
         if (result.approval) pendingApprovals += 1;

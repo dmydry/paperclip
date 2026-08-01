@@ -18,6 +18,7 @@ import {
   createDb,
   issueThreadInteractions,
   issues,
+  instanceSettings,
   principalPermissionGrants,
   routines,
   routineTriggers,
@@ -40,6 +41,7 @@ import {
 } from "../services/built-in-agents.ts";
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../services/built-in-agent-metadata.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
+import { instanceSettingsService } from "../services/instance-settings.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -138,6 +140,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     await db.delete(agents);
     await db.delete(budgetPolicies);
     await db.delete(companies);
+    await db.delete(instanceSettings);
     // Some tests drop the built-in marker unique index to simulate legacy
     // (pre-migration 0192) duplicates; restore it now that all rows are gone.
     await db.execute(sql.raw(BUILT_IN_MARKER_UNIQUE_INDEX_DDL));
@@ -165,6 +168,10 @@ describeEmbeddedPostgres("built-in agents", () => {
       requireBoardApprovalForNewAgents: options.requireApproval ?? true,
     });
     return companyId;
+  }
+
+  async function enableBuiltInAgents() {
+    await instanceSettingsService(db).updateExperimental({ enableBuiltInAgents: true });
   }
 
   it("validates the static registry and rejects invalid definitions", () => {
@@ -570,6 +577,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("auto-provisions a paused Reflection Coach bundle with skill sync and a disabled routine", async () => {
+    await enableBuiltInAgents();
     const companyId = await seedCompany({ requireApproval: false });
     const root = await agentService(db).create(companyId, {
       name: "CEO",
@@ -694,6 +702,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("preserves new-agent approval gates during automatic Reflection Coach provisioning", async () => {
+    await enableBuiltInAgents();
     const companyId = await seedCompany({ requireApproval: true });
     const root = await agentService(db).create(companyId, {
       name: "CEO",
@@ -1058,6 +1067,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("self-heals duplicates during startup reconciliation without aborting later companies", async () => {
+    await enableBuiltInAgents();
     const affectedCompanyId = await seedCompany({ requireApproval: false });
     const { olderId, newerId } = await seedLegacyDuplicateBriefs(affectedCompanyId);
     // A second company created after the affected one — previously skipped
