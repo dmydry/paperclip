@@ -1,0 +1,398 @@
+{
+  "schemaVersion": 1,
+  "paperclipRelease": "2026.609",
+  "sourceBaseSha": "1f1ba2b98734cba8ba2d7ffa1ecd673699329f7d",
+  "requiredRuntimeSkills": [
+    "paperclipai/paperclip/paperclip"
+  ],
+  "company": {
+    "id": "35c98cd5-9fb1-423e-912c-51a6c7767cad",
+    "issuePrefix": "BAL",
+    "name": "BaliBikeHouse Marketing"
+  },
+  "libraryPlan": {
+    "catalogInstall": [
+      {
+        "catalogId": "paperclipai:bundled:paperclip-operations:task-planning",
+        "key": "paperclipai/bundled/paperclip-operations/task-planning",
+        "slug": "task-planning"
+      },
+      {
+        "catalogId": "paperclipai:bundled:quality:qa-acceptance",
+        "key": "paperclipai/bundled/quality/qa-acceptance",
+        "slug": "qa-acceptance"
+      },
+      {
+        "catalogId": "paperclipai:bundled:software-development:github-pr-workflow",
+        "key": "paperclipai/bundled/software-development/github-pr-workflow",
+        "slug": "github-pr-workflow"
+      }
+    ],
+    "managedUpdate": [
+      {
+        "slug": "balibikehouse-repo-workflow",
+        "source": "skills/balibikehouse-repo-workflow/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-code-task-templates",
+        "source": "skills/balibikehouse-code-task-templates/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-execution-workspace-followups",
+        "source": "skills/balibikehouse-execution-workspace-followups/SKILL.md"
+      }
+    ],
+    "managedCreate": [
+      {
+        "slug": "balibikehouse-commercial-governance",
+        "source": "skills/balibikehouse-commercial-governance/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-native-content-localization",
+        "source": "skills/balibikehouse-native-content-localization/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-content-claims-quality",
+        "source": "skills/balibikehouse-content-claims-quality/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-communications-intelligence",
+        "source": "skills/balibikehouse-communications-intelligence/SKILL.md"
+      }
+    ],
+    "existingSkillSlugs": [
+      "balibikehouse-analytics-references",
+      "balibikehouse-backend-reference",
+      "balibikehouse-bugsink-triage",
+      "balibikehouse-code-task-templates",
+      "balibikehouse-execution-workspace-followups",
+      "balibikehouse-frontend-e2e",
+      "balibikehouse-frontend-reference",
+      "balibikehouse-repo-workflow",
+      "balibikehouse-seo-trends-scan",
+      "paperclip-converting-plans-to-tasks"
+    ]
+  },
+  "agents": [
+    {
+      "id": "b943222a-eabb-42eb-b3ec-3d251ed82dca",
+      "name": "Backend Engineer",
+      "urlKey": "backend-engineer",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/para-memory-files",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-repo-workflow",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-code-task-templates",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-backend-reference",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-execution-workspace-followups"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-repo-workflow",
+          "balibikehouse-code-task-templates",
+          "balibikehouse-backend-reference",
+          "balibikehouse-execution-workspace-followups",
+          "github-pr-workflow"
+        ]
+      }
+    },
+    {
+      "id": "0117b269-c32f-4d01-80cb-39c1b7b1f44a",
+      "name": "CEO",
+      "urlKey": "ceo",
+      "before": { "desiredSkills": [] },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "task-planning",
+          "balibikehouse-commercial-governance"
+        ]
+      }
+    },
+    {
+      "id": "a09343ac-8d53-4c19-9751-0fe2bce43b81",
+      "name": "CMO",
+      "urlKey": "cmo",
+      "before": { "desiredSkills": [] },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "task-planning",
+          "balibikehouse-commercial-governance",
+          "balibikehouse-analytics-references",
+          "balibikehouse-seo-trends-scan"
+        ]
+      }
+    },
+    {
+      "id": "c2c39ac1-e4f3-48c1-be6d-ad9c417a7326",
+      "name": "Communications Manager",
+      "urlKey": "communications-manager",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/para-memory-files",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-repo-workflow"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-communications-intelligence"
+        ]
+      }
+    },
+    {
+      "id": "31f7c6e2-2660-42e7-9420-d2719f729ceb",
+      "name": "Content Lead",
+      "urlKey": "content-lead",
+      "before": { "desiredSkills": [] },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "task-planning",
+          "balibikehouse-commercial-governance"
+        ]
+      }
+    },
+    {
+      "id": "a5b254e1-1e31-4e90-bbf5-cc4bee909d87",
+      "name": "Content Operator",
+      "urlKey": "content-operator",
+      "before": { "desiredSkills": [] },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-native-content-localization"
+        ]
+      }
+    },
+    {
+      "id": "b69ca116-15ad-490f-9e27-86a720daf9f5",
+      "name": "Content QA-QC",
+      "urlKey": "content-qa-qc",
+      "before": { "desiredSkills": [] },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "qa-acceptance",
+          "balibikehouse-content-claims-quality"
+        ]
+      }
+    },
+    {
+      "id": "61bab72b-cfa9-4cc3-a890-b4471a6c6363",
+      "name": "Data Analyst",
+      "urlKey": "data-analyst",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/diagnose-why-work-stopped",
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/paperclip-dev",
+          "paperclipai/paperclip/para-memory-files",
+          "paperclipai/paperclip/terminal-bench-loop",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-analytics-references",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-seo-trends-scan"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-analytics-references",
+          "balibikehouse-seo-trends-scan"
+        ]
+      }
+    },
+    {
+      "id": "9d2e4706-c77b-461b-b90b-4b7e68e0f568",
+      "name": "Frontend Engineer",
+      "urlKey": "frontend-engineer",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/para-memory-files",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-repo-workflow",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-code-task-templates",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-e2e",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-reference",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-execution-workspace-followups"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-repo-workflow",
+          "balibikehouse-code-task-templates",
+          "balibikehouse-frontend-e2e",
+          "balibikehouse-frontend-reference",
+          "balibikehouse-execution-workspace-followups",
+          "github-pr-workflow"
+        ]
+      }
+    },
+    {
+      "id": "25a8db3f-e630-4b15-834f-4a933bd1c8d0",
+      "name": "Product Owner",
+      "urlKey": "product-owner",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/para-memory-files",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-execution-workspace-followups"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "task-planning",
+          "paperclip-converting-plans-to-tasks",
+          "balibikehouse-commercial-governance",
+          "balibikehouse-code-task-templates",
+          "balibikehouse-execution-workspace-followups"
+        ]
+      }
+    },
+    {
+      "id": "baa12e76-edfc-4d64-aaa7-e3090003eed9",
+      "name": "Tech Lead",
+      "urlKey": "tech-lead",
+      "before": {
+        "desiredSkills": [
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-bugsink-triage",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-code-task-templates",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-repo-workflow",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-e2e",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-reference",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-backend-reference"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-bugsink-triage",
+          "balibikehouse-code-task-templates",
+          "balibikehouse-repo-workflow",
+          "balibikehouse-frontend-e2e",
+          "balibikehouse-frontend-reference",
+          "balibikehouse-backend-reference",
+          "github-pr-workflow"
+        ]
+      }
+    },
+    {
+      "id": "3ac53bd0-8f8f-41f3-8a78-d2fcb372fd9e",
+      "name": "Tech QA-QC",
+      "urlKey": "tech-qa-qc",
+      "before": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "paperclipai/paperclip/paperclip-create-agent",
+          "paperclipai/paperclip/paperclip-create-plugin",
+          "paperclipai/paperclip/para-memory-files",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-repo-workflow",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-e2e",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-frontend-reference",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-backend-reference",
+          "company/35c98cd5-9fb1-423e-912c-51a6c7767cad/balibikehouse-execution-workspace-followups"
+        ]
+      },
+      "after": {
+        "desiredSkills": [
+          "paperclipai/paperclip/paperclip",
+          "balibikehouse-repo-workflow",
+          "balibikehouse-code-task-templates",
+          "balibikehouse-frontend-e2e",
+          "balibikehouse-frontend-reference",
+          "balibikehouse-backend-reference",
+          "balibikehouse-execution-workspace-followups",
+          "qa-acceptance"
+        ]
+      }
+    }
+  ],
+  "skillMutationPolicy": {
+    "expectedRevision": 0,
+    "scopeNote": "Library mutations stay with board users and named trusted leads; runtime skill use and desired-skill sync are not revoked.",
+    "trustedAgentUrlKeys": [
+      "product-owner",
+      "tech-lead",
+      "content-lead"
+    ],
+    "apiPayload": {
+      "schemaVersion": 1,
+      "defaultEffect": "allow",
+      "rules": [
+        {
+          "id": "allow-named-trusted-leads",
+          "priority": 10,
+          "effect": "allow",
+          "subject": {
+            "type": "agents",
+            "agentIds": [
+              "25a8db3f-e630-4b15-834f-4a933bd1c8d0",
+              "baa12e76-edfc-4d64-aaa7-e3090003eed9",
+              "31f7c6e2-2660-42e7-9420-d2719f729ceb"
+            ]
+          },
+          "actions": [
+            "skills.create",
+            "skills.import",
+            "skills.install",
+            "skills.edit",
+            "skills.update",
+            "skills.test",
+            "skills.reset",
+            "skills.remove"
+          ]
+        },
+        {
+          "id": "deny-other-agents",
+          "priority": 100,
+          "effect": "deny",
+          "subject": { "type": "all_agents" },
+          "actions": [
+            "skills.create",
+            "skills.import",
+            "skills.install",
+            "skills.edit",
+            "skills.update",
+            "skills.test",
+            "skills.reset",
+            "skills.remove"
+          ]
+        }
+      ]
+    }
+  },
+  "routineInvariants": [
+    {
+      "id": "753288f6-d5da-48f3-9266-e8c1c62fcfbd",
+      "title": "Product Owner: check unanswered GBP review queue",
+      "activityGatePolicy": "always"
+    },
+    {
+      "id": "038a51ca-6b10-4f53-a69b-67f2a65fa271",
+      "title": "Product Owner: audit catalog description and translation health",
+      "activityGatePolicy": "always"
+    },
+    {
+      "id": "0882fcc9-a55c-4fa3-96f7-71a84ad87acf",
+      "title": "Weekly: Bikehouse Front smoke and regression audit",
+      "activityGatePolicy": "always"
+    }
+  ]
+}

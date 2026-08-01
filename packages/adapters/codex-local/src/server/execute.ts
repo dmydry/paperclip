@@ -237,7 +237,7 @@ async function isLikelyPaperclipRuntimeSkillPath(
   return false;
 }
 
-async function pruneBrokenUnavailablePaperclipSkillSymlinks(
+async function pruneUndesiredPaperclipSkillSymlinks(
   skillsHome: string,
   allowedSkillNames: Iterable<string>,
   onLog: AdapterExecutionContext["onLog"],
@@ -253,7 +253,6 @@ async function pruneBrokenUnavailablePaperclipSkillSymlinks(
     if (!linkedPath) continue;
 
     const resolvedLinkedPath = path.resolve(path.dirname(target), linkedPath);
-    if (await pathExists(resolvedLinkedPath)) continue;
     if (
       !(await isLikelyPaperclipRuntimeSkillPath(resolvedLinkedPath, entry.name, {
         requireSkillMarkdown: false,
@@ -422,9 +421,12 @@ export async function ensureCodexSkillsInjected(
     options.desiredSkillNames ?? allSkillsEntries.map((entry) => entry.key);
   const desiredSet = new Set(desiredSkillNames);
   const skillsEntries = allSkillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (skillsEntries.length === 0) return;
 
   const skillsHome = options.skillsHome ?? resolveCodexSkillsDir(resolveSharedCodexHomeDir());
+  if (skillsEntries.length === 0) {
+    await pruneUndesiredPaperclipSkillSymlinks(skillsHome, [], onLog);
+    return;
+  }
   await fs.mkdir(skillsHome, { recursive: true });
   const linkSkill = options.linkSkill;
   for (const entry of skillsEntries) {
@@ -471,7 +473,7 @@ export async function ensureCodexSkillsInjected(
     }
   }
 
-  await pruneBrokenUnavailablePaperclipSkillSymlinks(
+  await pruneUndesiredPaperclipSkillSymlinks(
     skillsHome,
     skillsEntries.map((entry) => entry.runtimeName),
     onLog,
