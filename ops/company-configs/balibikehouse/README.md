@@ -14,9 +14,9 @@ Nothing in this directory applies live configuration. The apply boundary is:
   policy ordering, routine invariants, apply/rollback/readback contract.
 - Tech Lead: the three updated workflow skills and the Backend Engineer,
   Frontend Engineer, Tech Lead, and Tech QA-QC bundles.
-- Content Lead: the commercial-governance and native-content skill contracts,
-  plus the CMO, Content Lead, Content Operator, and Communications Manager
-  bundles.
+- Content Lead: the commercial-governance, native-content, and
+  communications-intelligence skill contracts, plus the CMO, Content Lead,
+  Content Operator, and Communications Manager bundles.
 - Content QA-QC: the claims/localization/commercial-quality/AI-pattern QA skill
   and Content QA-QC bundle.
 
@@ -25,7 +25,7 @@ Nothing in this directory applies live configuration. The apply boundary is:
 - Install the bundled `task-planning`, `qa-acceptance`, and
   `github-pr-workflow` catalog skills.
 - Update three existing BAL managed skills from the exact merged source SHA.
-- Create three narrow BAL managed skills from the exact merged source SHA.
+- Create four narrow BAL managed skills from the exact merged source SHA.
 - Replace all 12 Codex-agent desired skill sets with the `after` arrays in
   `config.json`.
 - Materialize the explicit company skill-mutation policy in `config.json`.
@@ -87,7 +87,7 @@ The owner/operator must bind approval to the exact merged source SHA and then:
    12 desired sets with `GET /api/agents/{agentId}/skills`, all skills with
    `GET /api/companies/{companyId}/skills`, every managed `SKILL.md` with
    `GET /api/companies/{companyId}/skills/{skillId}/files?path=SKILL.md`, and
-   the routines with `GET /api/routines/{routineId}`. Require all six managed
+   the routines with `GET /api/routines/{routineId}`. Require all seven managed
    sources, the three catalog installations, and the three routine invariants
    to match. Store the substantial apply/readback report as an issue document
    or work product and leave only a concise linking comment.
@@ -105,7 +105,7 @@ acceptable apply path.
    revision-safe replacement.
 3. Restore the three updated managed `SKILL.md` files from the pre-apply
    readback artifact.
-4. Remove the three newly created managed skills and three catalog installs
+4. Remove the four newly created managed skills and three catalog installs
    only after confirming no agent still references them. If removal is not
    safe, leave them installed and unattached.
 5. Re-read all 12 skill snapshots, the policy, and all three routine

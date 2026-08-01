@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import unittest
 
 import validate as overlay
@@ -80,6 +81,48 @@ class BaliBikeHouseOverlayTests(unittest.TestCase):
                 self.assertFalse(
                     set(agent["after"]["desiredSkills"]) & overlay.BANNED_AFTER_SKILLS
                 )
+
+    def test_content_and_communications_role_bundles_are_exact(self) -> None:
+        agents = {agent["name"]: agent for agent in self.config["agents"]}
+        for name, expected in overlay.ROLE_EXCLUSIVE_AFTER.items():
+            with self.subTest(agent=name):
+                self.assertEqual(
+                    tuple(agents[name]["after"]["desiredSkills"]),
+                    expected,
+                )
+
+    def test_validator_rejects_content_lead_independent_qa_assignment(self) -> None:
+        config = copy.deepcopy(self.config)
+        content_lead = next(
+            agent for agent in config["agents"] if agent["name"] == "Content Lead"
+        )
+        content_lead["after"]["desiredSkills"].append(
+            "balibikehouse-content-claims-quality"
+        )
+
+        with self.assertRaisesRegex(
+            overlay.ValidationError,
+            "Content Lead role-exclusive after bundle",
+        ):
+            overlay.validate(config)
+
+    def test_validator_rejects_communications_execution_and_qa_assignment(self) -> None:
+        config = copy.deepcopy(self.config)
+        communications_manager = next(
+            agent
+            for agent in config["agents"]
+            if agent["name"] == "Communications Manager"
+        )
+        communications_manager["after"]["desiredSkills"] = [
+            "balibikehouse-native-content-localization",
+            "balibikehouse-content-claims-quality",
+        ]
+
+        with self.assertRaisesRegex(
+            overlay.ValidationError,
+            "Communications Manager role-exclusive after bundle",
+        ):
+            overlay.validate(config)
 
     def test_external_source_routine_gates_are_always(self) -> None:
         routines = self.config["routineInvariants"]

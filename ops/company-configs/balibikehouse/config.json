@@ -51,6 +51,10 @@
       {
         "slug": "balibikehouse-content-claims-quality",
         "source": "skills/balibikehouse-content-claims-quality/SKILL.md"
+      },
+      {
+        "slug": "balibikehouse-communications-intelligence",
+        "source": "skills/balibikehouse-communications-intelligence/SKILL.md"
       }
     ],
     "existingSkillSlugs": [
@@ -134,8 +138,7 @@
       },
       "after": {
         "desiredSkills": [
-          "balibikehouse-native-content-localization",
-          "balibikehouse-content-claims-quality"
+          "balibikehouse-communications-intelligence"
         ]
       }
     },
@@ -147,8 +150,7 @@
       "after": {
         "desiredSkills": [
           "task-planning",
-          "balibikehouse-commercial-governance",
-          "balibikehouse-content-claims-quality"
+          "balibikehouse-commercial-governance"
         ]
       }
     },

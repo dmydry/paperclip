@@ -65,6 +65,35 @@ WORKFLOW_MARKERS = {
     "do not poll ci",
 }
 
+ROLE_EXCLUSIVE_AFTER = {
+    "Communications Manager": (
+        "balibikehouse-communications-intelligence",
+    ),
+    "Content Lead": (
+        "task-planning",
+        "balibikehouse-commercial-governance",
+    ),
+    "Content Operator": (
+        "balibikehouse-native-content-localization",
+    ),
+    "Content QA-QC": (
+        "qa-acceptance",
+        "balibikehouse-content-claims-quality",
+    ),
+}
+
+COMMUNICATIONS_INTELLIGENCE_MARKERS = {
+    "deterministic export",
+    "issue document",
+    "work product",
+    "dedupe",
+    "routed follow-up",
+    "direct customer communication",
+    "cms execution",
+    "content publication",
+    "independent editorial qa",
+}
+
 
 class ValidationError(Exception):
     """Raised when the overlay is incomplete or internally inconsistent."""
@@ -183,11 +212,19 @@ def validate(config: dict[str, Any]) -> None:
         }
         _require(not banned, f"{agent['name']} retains broad skills: {sorted(banned)}")
 
+    agents_by_name = {agent["name"]: agent for agent in agents}
+    for name, expected in ROLE_EXCLUSIVE_AFTER.items():
+        actual = tuple(agents_by_name[name]["after"]["desiredSkills"])
+        _require(
+            actual == expected,
+            f"{name} role-exclusive after bundle must be {list(expected)}; got {list(actual)}",
+        )
+
     library = config["libraryPlan"]
     catalog = library["catalogInstall"]
     _require(len(catalog) == 3, "exactly three catalog installs are expected")
     _require(len(library["managedUpdate"]) == 3, "exactly three skill updates are expected")
-    _require(len(library["managedCreate"]) == 3, "exactly three skill creates are expected")
+    _require(len(library["managedCreate"]) == 4, "exactly four skill creates are expected")
 
     managed = library["managedUpdate"] + library["managedCreate"]
     for entry in managed:
@@ -201,6 +238,25 @@ def validate(config: dict[str, Any]) -> None:
         text = (ROOT / entry["source"]).read_text(encoding="utf-8").lower()
         missing = WORKFLOW_MARKERS - {marker for marker in WORKFLOW_MARKERS if marker in text}
         _require(not missing, f"{entry['slug']} misses workflow markers: {sorted(missing)}")
+
+    communications_entry = next(
+        entry
+        for entry in library["managedCreate"]
+        if entry["slug"] == "balibikehouse-communications-intelligence"
+    )
+    communications_text = (ROOT / communications_entry["source"]).read_text(
+        encoding="utf-8"
+    ).lower()
+    missing_communications_markers = {
+        marker
+        for marker in COMMUNICATIONS_INTELLIGENCE_MARKERS
+        if marker not in communications_text
+    }
+    _require(
+        not missing_communications_markers,
+        "communications intelligence skill misses boundary markers: "
+        f"{sorted(missing_communications_markers)}",
+    )
 
     policy = config["skillMutationPolicy"]
     payload = policy["apiPayload"]
@@ -287,7 +343,7 @@ def main(argv: list[str]) -> int:
         config = load_config()
         if command == "validate":
             validate(config)
-            print("BAL overlay valid: 12 agents, 6 managed skills, 3 routine invariants")
+            print("BAL overlay valid: 12 agents, 7 managed skills, 3 routine invariants")
         elif command == "skill-sync-dry-run":
             print(json.dumps(dry_run_summary(config), indent=2, sort_keys=True))
         else:
