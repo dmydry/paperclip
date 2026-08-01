@@ -58,6 +58,7 @@ function decide(overrides: Partial<Parameters<typeof decideSuccessfulRunHandoff>
     hasPersistedMonitor: false,
     hasExplicitBlockerPath: false,
     hasOpenRecoveryIssue: false,
+    hasActiveRecoveryAction: false,
     hasPauseHold: false,
     hasActiveRoutineContinuation: false,
     budgetBlocked: false,
@@ -328,6 +329,34 @@ describe("successful run handoff decision", () => {
       kind: "skip",
       reason: "source run is already a corrective handoff run",
     });
+  });
+
+  it("does not create a corrective handoff from a source-scoped recovery run", () => {
+    expect(decide({
+      run: {
+        ...run,
+        id: "run-recovery",
+        contextSnapshot: {
+          issueId: "issue-1",
+          wakeReason: "source_scoped_recovery_action",
+          source: "issue_recovery_action",
+          recoveryActionId: "recovery-action-1",
+          allowDeliverableWork: false,
+        },
+      } as any,
+    })).toEqual({
+      kind: "skip",
+      reason: "source-scoped recovery run owns its own recovery path",
+    });
+  });
+
+  it("treats an active source-scoped recovery action as a durable handoff path", () => {
+    const decision = decide({ hasActiveRecoveryAction: true });
+    expect(decision).toEqual({
+      kind: "skip",
+      reason: "active source-scoped recovery action owns the ambiguity",
+    });
+    expect(isSuccessfulRunHandoffValidPathSkip(decision)).toBe(true);
   });
 
   it("does not queue for issue monitor maintenance runs", () => {
