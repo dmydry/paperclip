@@ -6,6 +6,7 @@ import {
   agentConfigRevisions,
   agents,
   agentWakeupRequests,
+  approvals,
   builtInManagedResources,
   companies,
   companySkillVersions,
@@ -14,6 +15,7 @@ import {
   createDb,
   heartbeatRunEvents,
   heartbeatRuns,
+  instanceSettings,
   principalPermissionGrants,
   routines,
   routineTriggers,
@@ -25,6 +27,7 @@ import {
 import { companyService } from "../services/companies.js";
 import { readBuiltInAgentMarker } from "../services/built-in-agent-metadata.js";
 import { reconcileBuiltInAgentsOnStartup } from "../services/built-in-agents.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -55,10 +58,12 @@ describeEmbeddedPostgres("companyService", () => {
     await db.delete(agentWakeupRequests);
     await db.delete(agentConfigRevisions);
     await db.delete(activityLog);
+    await db.delete(approvals);
     await db.delete(agents);
     await db.delete(principalPermissionGrants);
     await db.delete(companyMemberships);
     await db.delete(companies);
+    await db.delete(instanceSettings);
   });
 
   afterAll(async () => {
@@ -81,7 +86,24 @@ describeEmbeddedPostgres("companyService", () => {
     expect(rows.map((row) => row.issuePrefix).sort()).toEqual(["ARO", "AROA"]);
   });
 
-  it("auto-provisions one paused Reflection Coach bundle for a freshly created company", async () => {
+  it("does not auto-provision bundled agents while the feature is disabled", async () => {
+    const created = await companyService(db).create({
+      name: "Fresh Company",
+      requireBoardApprovalForNewAgents: true,
+    });
+
+    const agentRows = await db.select().from(agents).where(eq(agents.companyId, created.id));
+    expect(agentRows.filter((row) => readBuiltInAgentMarker(row.metadata))).toHaveLength(0);
+
+    await reconcileBuiltInAgentsOnStartup(db);
+    const afterReconcileRows = await db.select().from(agents).where(eq(agents.companyId, created.id));
+    expect(afterReconcileRows.filter((row) => readBuiltInAgentMarker(row.metadata))).toHaveLength(0);
+    const approvalRows = await db.select().from(approvals).where(eq(approvals.companyId, created.id));
+    expect(approvalRows).toHaveLength(0);
+  });
+
+  it("auto-provisions one paused Reflection Coach bundle for a freshly created company when enabled", async () => {
+    await instanceSettingsService(db).updateExperimental({ enableBuiltInAgents: true });
     const created = await companyService(db).create({
       name: "Fresh Company",
     });
