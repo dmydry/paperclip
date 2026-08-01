@@ -2844,7 +2844,9 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       monitorPolicy: recoveryCause === "provider_quota" && !ownerAgentId
         ? { type: "wait_recovery", retryAgentId: routing.returnOwnerAgentId }
         : null,
-      maxAttempts: null,
+      maxAttempts: recoveryCause === SUCCESSFUL_RUN_MISSING_STATE_REASON
+        ? DEFAULT_MAX_SUCCESSFUL_RUN_HANDOFF_ATTEMPTS
+        : null,
       lastAttemptAt: now,
     });
 
@@ -2857,6 +2859,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     latestRun: LatestIssueRun;
     recoveryCause: StrandedRecoveryCause;
   }) {
+    if (input.action.maxAttempts !== null && input.action.attemptCount > input.action.maxAttempts) return;
     if (input.recoveryCause === "provider_quota" && !input.action.ownerAgentId) return;
     if (input.recoveryCause === "configuration_incomplete") return;
     if (!input.action.ownerAgentId) return;

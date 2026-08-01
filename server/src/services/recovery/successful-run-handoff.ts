@@ -105,6 +105,7 @@ const SUCCESSFUL_RUN_HANDOFF_VALID_PATH_SKIP_REASONS = new Set([
   "persisted issue monitor owns the next action",
   "explicit blocker path owns the next action",
   "open recovery issue owns the ambiguity",
+  "active source-scoped recovery action owns the ambiguity",
   "issue is under an active pause hold",
   "corrective handoff wake already exists for this source run",
 ]);
@@ -349,6 +350,12 @@ function isCorrectiveHandoffRun(run: HeartbeatRunRow) {
     readString(context.wakeReason) === FINISH_SUCCESSFUL_RUN_HANDOFF_REASON;
 }
 
+function isSourceScopedRecoveryActionRun(run: HeartbeatRunRow) {
+  const context = readRecord(run.contextSnapshot);
+  return readString(context.wakeReason) === "source_scoped_recovery_action" ||
+    readString(context.source) === "issue_recovery_action";
+}
+
 function isIssueMonitorMaintenanceRun(run: HeartbeatRunRow) {
   const context = readRecord(run.contextSnapshot);
   const wakeReason = readString(context.wakeReason);
@@ -459,6 +466,7 @@ export function decideSuccessfulRunHandoff(input: {
   hasPersistedMonitor: boolean;
   hasExplicitBlockerPath: boolean;
   hasOpenRecoveryIssue: boolean;
+  hasActiveRecoveryAction: boolean;
   hasPauseHold: boolean;
   hasActiveRoutineContinuation: boolean;
   budgetBlocked: boolean;
@@ -468,6 +476,9 @@ export function decideSuccessfulRunHandoff(input: {
 
   if (run.status !== "succeeded") return { kind: "skip", reason: "source run did not succeed" };
   if (isCorrectiveHandoffRun(run)) return { kind: "skip", reason: "source run is already a corrective handoff run" };
+  if (isSourceScopedRecoveryActionRun(run)) {
+    return { kind: "skip", reason: "source-scoped recovery run owns its own recovery path" };
+  }
   if (isIssueMonitorMaintenanceRun(run)) return { kind: "skip", reason: "issue monitor run owns its own recovery path" };
   if (isCommentDrivenWake(run)) return { kind: "skip", reason: "comment-driven wake already owns the next action" };
   if (run.issueCommentStatus === "retry_queued" || run.issueCommentStatus === "retry_exhausted") {
@@ -501,6 +512,9 @@ export function decideSuccessfulRunHandoff(input: {
   if (input.hasPersistedMonitor) return { kind: "skip", reason: "persisted issue monitor owns the next action" };
   if (input.hasExplicitBlockerPath) return { kind: "skip", reason: "explicit blocker path owns the next action" };
   if (input.hasOpenRecoveryIssue) return { kind: "skip", reason: "open recovery issue owns the ambiguity" };
+  if (input.hasActiveRecoveryAction) {
+    return { kind: "skip", reason: "active source-scoped recovery action owns the ambiguity" };
+  }
   if (input.hasPauseHold) return { kind: "skip", reason: "issue is under an active pause hold" };
   if (input.budgetBlocked) return { kind: "skip", reason: "budget hard stop blocks corrective wake" };
   if (input.idempotentWakeExists) {

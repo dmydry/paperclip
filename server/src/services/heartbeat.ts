@@ -8968,6 +8968,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       pendingApproval,
       explicitBlocker,
       openRecoveryIssue,
+      activeRecoveryActionId,
       existingWake,
       budgetBlock,
       pauseHold,
@@ -9082,6 +9083,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           .limit(1)
           .then((rows) => rows[0] ?? null)
         : Promise.resolve(null),
+      issue
+        ? getActiveRecoveryActionId(issue.companyId, issue.id)
+        : Promise.resolve(null),
       idempotencyKey
         ? findExistingFinishSuccessfulRunHandoffWake(db, {
           companyId: run.companyId,
@@ -9128,6 +9132,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       hasPersistedMonitor: Boolean(issue?.monitorNextCheckAt),
       hasExplicitBlockerPath: Boolean(explicitBlocker),
       hasOpenRecoveryIssue: Boolean(openRecoveryIssue),
+      hasActiveRecoveryAction: Boolean(activeRecoveryActionId),
       hasPauseHold: Boolean(pauseHold),
       hasActiveRoutineContinuation: Boolean(activeRoutineContinuation),
       budgetBlocked: Boolean(budgetBlock),
