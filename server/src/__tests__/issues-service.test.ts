@@ -5906,6 +5906,8 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
     const targetProjectId = randomUUID();
     const sourceProjectWorkspaceId = randomUUID();
     const targetProjectWorkspaceId = randomUUID();
+    const initialActorRunId = randomUUID();
+    const recoveryActorRunId = randomUUID();
 
     await db.insert(projects).values([
       {
@@ -5952,6 +5954,7 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
         status: "todo" as const,
         workMode: "standard" as const,
         priority: "medium" as const,
+        actorRunId: initialActorRunId,
       },
       {
         title: "Select the target project workspace",
@@ -5959,8 +5962,13 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
         status: "backlog" as const,
         workMode: "standard" as const,
         priority: "medium" as const,
+        actorRunId: initialActorRunId,
       },
     ];
+    const recoveryChildren = children.map((child) => ({
+      ...child,
+      actorRunId: recoveryActorRunId,
+    }));
 
     const initial = await svc.decomposeAcceptedPlan(sourceIssueId, {
       acceptedPlanRevisionId,
@@ -5995,6 +6003,7 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
       .update(issuePlanDecompositions)
       .set({
         status: "in_flight",
+        requestFingerprint: "legacy-run-scoped-fingerprint",
         childIssueIds: [sourceChildId!],
         completedAt: null,
         updatedAt: new Date(),
@@ -6003,7 +6012,7 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
 
     const recovered = await svc.decomposeAcceptedPlan(sourceIssueId, {
       acceptedPlanRevisionId,
-      children,
+      children: recoveryChildren,
       actorAgentId: assigneeAgentId,
     });
     expect(recovered.decomposition.status).toBe("completed");
@@ -6016,7 +6025,7 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
 
     const replayed = await svc.decomposeAcceptedPlan(sourceIssueId, {
       acceptedPlanRevisionId,
-      children,
+      children: recoveryChildren,
       actorAgentId: assigneeAgentId,
     });
     expect(replayed.childIssueIds).toEqual(recovered.childIssueIds);
@@ -6028,15 +6037,19 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
       .where(eq(issues.parentId, sourceIssueId));
     expect(persistedChildren).toHaveLength(2);
     const persistedClaims = await db
-      .select({ id: issuePlanDecompositions.id })
+      .select({
+        id: issuePlanDecompositions.id,
+        requestFingerprint: issuePlanDecompositions.requestFingerprint,
+      })
       .from(issuePlanDecompositions)
       .where(eq(issuePlanDecompositions.sourceIssueId, sourceIssueId));
     expect(persistedClaims).toHaveLength(1);
+    expect(persistedClaims[0]?.requestFingerprint).not.toBe("legacy-run-scoped-fingerprint");
 
     await expect(
       svc.decomposeAcceptedPlan(sourceIssueId, {
         acceptedPlanRevisionId,
-        children: children.map((child, index) =>
+        children: recoveryChildren.map((child, index) =>
           index === 1 ? { ...child, title: "A different target child" } : child,
         ),
         actorAgentId: assigneeAgentId,

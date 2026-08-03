@@ -832,6 +832,10 @@ const ACCEPTED_PLAN_DECOMPOSITION_FINGERPRINT_CHILD_METADATA_KEYS = new Set([
   "updatedByUserId",
   "actorAgentId",
   "actorUserId",
+  "actorRunId",
+  "actorResponsibleUserId",
+  "trustExplicitResponsibleUserId",
+  "sourceTrust",
   "executionWorkspaceInheritanceMode",
   "skipExecutionWorkspaceInheritance",
 ]);
@@ -6098,7 +6102,26 @@ export function issueService(db: Db) {
         }
 
         if (existing.requestFingerprint !== requestFingerprint) {
-          throw conflict("Accepted-plan decomposition already exists for this revision with a different child set");
+          // Older claims fingerprinted request-scoped attribution. Upgrade them only
+          // when their durable child draft is otherwise identical to this request.
+          const persistedChildren = Array.isArray(existing.requestedChildren)
+            ? (existing.requestedChildren as unknown as IssueChildCreateInput[])
+            : [];
+          const persistedRequestFingerprint = createAcceptedPlanDecompositionRequestFingerprint({
+            acceptedPlanRevisionId: existing.acceptedPlanRevisionId,
+            children: persistedChildren,
+          });
+          if (persistedRequestFingerprint !== requestFingerprint) {
+            throw conflict("Accepted-plan decomposition already exists for this revision with a different child set");
+          }
+
+          const [upgraded] = await tx
+            .update(issuePlanDecompositions)
+            .set({ requestFingerprint, updatedAt: now })
+            .where(eq(issuePlanDecompositions.id, existing.id))
+            .returning();
+          if (!upgraded) throw new Error("Failed to upgrade accepted-plan decomposition fingerprint");
+          return upgraded;
         }
 
         return existing;
