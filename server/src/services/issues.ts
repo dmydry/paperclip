@@ -5966,6 +5966,11 @@ export function issueService(db: Db) {
         issueData.executionWorkspaceId !== undefined ||
         issueData.executionWorkspacePreference !== undefined ||
         issueData.executionWorkspaceSettings !== undefined;
+      const childProjectId = issueData.projectId ?? parent.projectId;
+      const inheritedProjectWorkspaceId =
+        inheritStrategyOnly && childProjectId === parent.projectId
+          ? parent.projectWorkspaceId
+          : undefined;
       const inheritedPreRealizationWorkspaceSettings =
         inheritStrategyOnly && !hasExplicitExecutionWorkspaceOverride
           ? buildPreRealizationExecutionWorkspaceSettings(parent.executionWorkspaceSettings)
@@ -5973,8 +5978,8 @@ export function issueService(db: Db) {
       let child = await issueService(db).create(parent.companyId, {
         ...issueData,
         parentId: parent.id,
-        projectId: issueData.projectId ?? parent.projectId,
-        projectWorkspaceId: issueData.projectWorkspaceId ?? (inheritStrategyOnly ? parent.projectWorkspaceId : undefined),
+        projectId: childProjectId,
+        projectWorkspaceId: issueData.projectWorkspaceId ?? inheritedProjectWorkspaceId,
         goalId: issueData.goalId ?? parent.goalId,
         actorResponsibleUserId: issueData.actorResponsibleUserId ?? null,
         trustExplicitResponsibleUserId: issueData.trustExplicitResponsibleUserId === true,
