@@ -832,6 +832,10 @@ const ACCEPTED_PLAN_DECOMPOSITION_FINGERPRINT_CHILD_METADATA_KEYS = new Set([
   "updatedByUserId",
   "actorAgentId",
   "actorUserId",
+  "actorRunId",
+  "actorResponsibleUserId",
+  "trustExplicitResponsibleUserId",
+  "sourceTrust",
   "executionWorkspaceInheritanceMode",
   "skipExecutionWorkspaceInheritance",
 ]);
@@ -5966,6 +5970,11 @@ export function issueService(db: Db) {
         issueData.executionWorkspaceId !== undefined ||
         issueData.executionWorkspacePreference !== undefined ||
         issueData.executionWorkspaceSettings !== undefined;
+      const childProjectId = issueData.projectId ?? parent.projectId;
+      const inheritedProjectWorkspaceId =
+        inheritStrategyOnly && childProjectId === parent.projectId
+          ? parent.projectWorkspaceId
+          : undefined;
       const inheritedPreRealizationWorkspaceSettings =
         inheritStrategyOnly && !hasExplicitExecutionWorkspaceOverride
           ? buildPreRealizationExecutionWorkspaceSettings(parent.executionWorkspaceSettings)
@@ -5973,8 +5982,8 @@ export function issueService(db: Db) {
       let child = await issueService(db).create(parent.companyId, {
         ...issueData,
         parentId: parent.id,
-        projectId: issueData.projectId ?? parent.projectId,
-        projectWorkspaceId: issueData.projectWorkspaceId ?? (inheritStrategyOnly ? parent.projectWorkspaceId : undefined),
+        projectId: childProjectId,
+        projectWorkspaceId: issueData.projectWorkspaceId ?? inheritedProjectWorkspaceId,
         goalId: issueData.goalId ?? parent.goalId,
         actorResponsibleUserId: issueData.actorResponsibleUserId ?? null,
         trustExplicitResponsibleUserId: issueData.trustExplicitResponsibleUserId === true,
@@ -6093,7 +6102,26 @@ export function issueService(db: Db) {
         }
 
         if (existing.requestFingerprint !== requestFingerprint) {
-          throw conflict("Accepted-plan decomposition already exists for this revision with a different child set");
+          // Older claims fingerprinted request-scoped attribution. Upgrade them only
+          // when their durable child draft is otherwise identical to this request.
+          const persistedChildren = Array.isArray(existing.requestedChildren)
+            ? (existing.requestedChildren as unknown as IssueChildCreateInput[])
+            : [];
+          const persistedRequestFingerprint = createAcceptedPlanDecompositionRequestFingerprint({
+            acceptedPlanRevisionId: existing.acceptedPlanRevisionId,
+            children: persistedChildren,
+          });
+          if (persistedRequestFingerprint !== requestFingerprint) {
+            throw conflict("Accepted-plan decomposition already exists for this revision with a different child set");
+          }
+
+          const [upgraded] = await tx
+            .update(issuePlanDecompositions)
+            .set({ requestFingerprint, updatedAt: now })
+            .where(eq(issuePlanDecompositions.id, existing.id))
+            .returning();
+          if (!upgraded) throw new Error("Failed to upgrade accepted-plan decomposition fingerprint");
+          return upgraded;
         }
 
         return existing;

@@ -5900,6 +5900,163 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
     expect(result.decomposition.status).toBe("completed");
   });
 
+  it("selects project-local workspaces when a partial accepted-plan decomposition crosses projects", async () => {
+    const { companyId, sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
+    const sourceProjectId = randomUUID();
+    const targetProjectId = randomUUID();
+    const sourceProjectWorkspaceId = randomUUID();
+    const targetProjectWorkspaceId = randomUUID();
+    const initialActorRunId = randomUUID();
+    const recoveryActorRunId = randomUUID();
+
+    await db.insert(projects).values([
+      {
+        id: sourceProjectId,
+        companyId,
+        name: "Planning source",
+        status: "in_progress",
+      },
+      {
+        id: targetProjectId,
+        companyId,
+        name: "Implementation target",
+        status: "in_progress",
+      },
+    ]);
+    await db.insert(projectWorkspaces).values([
+      {
+        id: sourceProjectWorkspaceId,
+        companyId,
+        projectId: sourceProjectId,
+        name: "Planning source workspace",
+        isPrimary: true,
+      },
+      {
+        id: targetProjectWorkspaceId,
+        companyId,
+        projectId: targetProjectId,
+        name: "Implementation target workspace",
+        isPrimary: true,
+      },
+    ]);
+    await db
+      .update(issues)
+      .set({
+        projectId: sourceProjectId,
+        projectWorkspaceId: sourceProjectWorkspaceId,
+      })
+      .where(eq(issues.id, sourceIssueId));
+
+    const children = [
+      {
+        title: "Keep the source project workspace",
+        projectId: sourceProjectId,
+        status: "todo" as const,
+        workMode: "standard" as const,
+        priority: "medium" as const,
+        actorRunId: initialActorRunId,
+      },
+      {
+        title: "Select the target project workspace",
+        projectId: targetProjectId,
+        status: "backlog" as const,
+        workMode: "standard" as const,
+        priority: "medium" as const,
+        actorRunId: initialActorRunId,
+      },
+    ];
+    const recoveryChildren = children.map((child) => ({
+      ...child,
+      actorRunId: recoveryActorRunId,
+    }));
+
+    const initial = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children,
+      actorAgentId: assigneeAgentId,
+    });
+    const [sourceChildId, targetChildId] = initial.childIssueIds;
+    expect(sourceChildId).toBeTruthy();
+    expect(targetChildId).toBeTruthy();
+
+    const initialChildren = await db
+      .select({
+        id: issues.id,
+        projectId: issues.projectId,
+        projectWorkspaceId: issues.projectWorkspaceId,
+      })
+      .from(issues)
+      .where(eq(issues.parentId, sourceIssueId));
+    expect(initialChildren.find((child) => child.id === sourceChildId)).toMatchObject({
+      projectId: sourceProjectId,
+      projectWorkspaceId: sourceProjectWorkspaceId,
+    });
+    expect(initialChildren.find((child) => child.id === targetChildId)).toMatchObject({
+      projectId: targetProjectId,
+      projectWorkspaceId: targetProjectWorkspaceId,
+    });
+
+    const claim = await getAcceptedPlanClaim(sourceIssueId);
+    expect(claim).not.toBeNull();
+    await db.delete(issues).where(eq(issues.id, targetChildId!));
+    await db
+      .update(issuePlanDecompositions)
+      .set({
+        status: "in_flight",
+        requestFingerprint: "legacy-run-scoped-fingerprint",
+        childIssueIds: [sourceChildId!],
+        completedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(issuePlanDecompositions.id, claim!.id));
+
+    const recovered = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children: recoveryChildren,
+      actorAgentId: assigneeAgentId,
+    });
+    expect(recovered.decomposition.status).toBe("completed");
+    expect(recovered.childIssueIds[0]).toBe(sourceChildId);
+    expect(recovered.newlyCreatedIssues).toHaveLength(1);
+    expect(recovered.newlyCreatedIssues[0]).toMatchObject({
+      projectId: targetProjectId,
+      projectWorkspaceId: targetProjectWorkspaceId,
+    });
+
+    const replayed = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children: recoveryChildren,
+      actorAgentId: assigneeAgentId,
+    });
+    expect(replayed.childIssueIds).toEqual(recovered.childIssueIds);
+    expect(replayed.newlyCreatedIssues).toHaveLength(0);
+
+    const persistedChildren = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.parentId, sourceIssueId));
+    expect(persistedChildren).toHaveLength(2);
+    const persistedClaims = await db
+      .select({
+        id: issuePlanDecompositions.id,
+        requestFingerprint: issuePlanDecompositions.requestFingerprint,
+      })
+      .from(issuePlanDecompositions)
+      .where(eq(issuePlanDecompositions.sourceIssueId, sourceIssueId));
+    expect(persistedClaims).toHaveLength(1);
+    expect(persistedClaims[0]?.requestFingerprint).not.toBe("legacy-run-scoped-fingerprint");
+
+    await expect(
+      svc.decomposeAcceptedPlan(sourceIssueId, {
+        acceptedPlanRevisionId,
+        children: recoveryChildren.map((child, index) =>
+          index === 1 ? { ...child, title: "A different target child" } : child,
+        ),
+        actorAgentId: assigneeAgentId,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("serializes concurrent accepted-plan retries for the same parent issue without duplicate children", async () => {
     const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
     const children = [
