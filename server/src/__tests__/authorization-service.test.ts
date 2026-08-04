@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
@@ -6,6 +7,7 @@ import {
   companies,
   companyMemberships,
   createDb,
+  heartbeatRuns,
   instanceUserRoles,
   issueComments,
   issues,
@@ -173,6 +175,7 @@ describeEmbeddedPostgres("authorization service", () => {
 
   afterEach(async () => {
     await db.delete(issueComments);
+    await db.delete(heartbeatRuns);
     await db.delete(userInboxAgentPolicies);
     await db.delete(principalPermissionGrants);
     await db.delete(companyMemberships);
@@ -1217,6 +1220,56 @@ describeEmbeddedPostgres("authorization service", () => {
       action: "issue:mutate",
       resource,
     })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
+  });
+
+  it("allows a run-scoped agent to comment on its current issue only", async () => {
+    const company = await createCompany(db, "RunScopedComment");
+    const agent = await createAgent(db, company.id, { role: "engineer" });
+    const currentIssue = await createIssue(db, company.id, {
+      title: "Current run issue",
+      assigneeAgentId: agent.id,
+    });
+    const otherIssue = await createIssue(db, company.id, {
+      title: "Other assigned issue",
+      assigneeAgentId: agent.id,
+    });
+    const run = await db.insert(heartbeatRuns).values({
+      companyId: company.id,
+      agentId: agent.id,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: { issueId: currentIssue.id },
+    }).returning().then((rows) => rows[0]!);
+    await db.update(issues).set({ checkoutRunId: run.id }).where(eq(issues.id, currentIssue.id));
+
+    const authorization = authorizationService(db);
+    const actor = {
+      type: "agent",
+      agentId: agent.id,
+      companyId: company.id,
+      source: "agent_key",
+      runId: run.id,
+    } as const;
+    const resource = (issue: typeof currentIssue) => ({
+      type: "issue" as const,
+      companyId: company.id,
+      issueId: issue.id,
+      projectId: issue.projectId,
+      parentIssueId: issue.parentId,
+      assigneeAgentId: issue.assigneeAgentId,
+      status: issue.status,
+    });
+
+    await expect(authorization.decide({
+      actor,
+      action: "issue:comment",
+      resource: resource(currentIssue),
+    })).resolves.toMatchObject({ allowed: true, reason: "allow_self" });
+    await expect(authorization.decide({
+      actor,
+      action: "issue:comment",
+      resource: resource(otherIssue),
+    })).resolves.toMatchObject({ allowed: false, reason: "deny_missing_grant" });
   });
 
   it("allows low-trust agents to post comments on same-company issues without granting mutation", async () => {
