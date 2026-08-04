@@ -796,23 +796,27 @@ export function authorizationService(db: Db) {
     return issueId || null;
   }
 
-  async function isDirectParentReportTarget(input: {
+  async function resolveRunIssueCommentTarget(input: {
     actor: AuthorizationActor;
     actorAgentId: string;
     companyId: string;
     resource: AuthorizationResource;
   }) {
-    if (input.resource.type !== "issue" || !input.resource.issueId) return false;
+    if (input.resource.type !== "issue" || !input.resource.issueId) return null;
     const runIssueId = await loadRunIssueId(input.actor.runId, input.companyId, input.actorAgentId);
-    if (!runIssueId || runIssueId === input.resource.issueId) return false;
+    if (!runIssueId) return null;
     const runIssue = await loadIssue(runIssueId);
-    return Boolean(
-      runIssue &&
-      runIssue.companyId === input.companyId &&
-      runIssue.assigneeAgentId === input.actorAgentId &&
-      runIssue.checkoutRunId === input.actor.runId &&
-      runIssue.parentId === input.resource.issueId,
-    );
+    if (
+      !runIssue ||
+      runIssue.companyId !== input.companyId ||
+      runIssue.assigneeAgentId !== input.actorAgentId ||
+      runIssue.checkoutRunId !== input.actor.runId
+    ) {
+      return null;
+    }
+    if (runIssue.id === input.resource.issueId) return "current_issue";
+    if (runIssue.parentId === input.resource.issueId) return "direct_parent";
+    return null;
   }
 
   async function loadProjectAuthorizationPolicy(companyId: string, projectId: string) {
@@ -1744,7 +1748,7 @@ export function authorizationService(db: Db) {
       if (taskBridgeDecision) return taskBridgeDecision;
     }
 
-    let directParentReportTarget = false;
+    let runIssueCommentTarget: "current_issue" | "direct_parent" | null = null;
     if (input.action === "issue:comment") {
       if (!input.actor.runId) {
         return allow({
@@ -1753,7 +1757,7 @@ export function authorizationService(db: Db) {
           explanation: "Allowed because same-company agents may post issue comments.",
         });
       }
-      directParentReportTarget = await isDirectParentReportTarget({
+      runIssueCommentTarget = await resolveRunIssueCommentTarget({
         actor: input.actor,
         actorAgentId,
         companyId,
@@ -1772,7 +1776,7 @@ export function authorizationService(db: Db) {
       action: input.action,
       resource: input.resource,
       resolution: trustResolution,
-      directParentReportTarget,
+      directParentReportTarget: runIssueCommentTarget === "direct_parent",
     });
     if (lowTrustDecision) {
       if (!lowTrustDecision.allowed) return lowTrustDecision;
@@ -1793,12 +1797,14 @@ export function authorizationService(db: Db) {
     if (
       trustResolution.kind === "standard" &&
       input.action === "issue:comment" &&
-      directParentReportTarget
+      runIssueCommentTarget
     ) {
       return allow({
         action: input.action,
-        reason: "allow_direct_parent_report",
-        explanation: "Allowed because the target is the current run issue's direct parent under the standard trust preset.",
+        reason: runIssueCommentTarget === "current_issue" ? "allow_self" : "allow_direct_parent_report",
+        explanation: runIssueCommentTarget === "current_issue"
+          ? "Allowed because the target is the current run issue."
+          : "Allowed because the target is the current run issue's direct parent under the standard trust preset.",
       });
     }
 
