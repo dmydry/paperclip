@@ -3106,7 +3106,9 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         await turn.cancel({ reason });
       };
       for await (const event of turn.events) {
-        if (event.type === "text_delta") textParts.push(event.text);
+        if (event.type === "text_delta" && event.stream === "output") {
+          textParts.push(event.text);
+        }
         if (event.type === "status" && event.tag === "usage_update") {
           eventBreakdown = event.breakdown ?? eventBreakdown;
           eventCostUsd = usdCostAmount(event.cost) ?? eventCostUsd;

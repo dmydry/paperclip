@@ -378,6 +378,12 @@ describe("shared ACPX engine runtime behavior", () => {
           events: (async function* () {
             yield {
               type: "text_delta",
+              text: "private reasoning",
+              stream: "thought",
+              tag: "reasoning_chunk",
+            };
+            yield {
+              type: "text_delta",
               text: "streamed hello",
               stream: "output",
               tag: "agent_message_chunk",
@@ -407,6 +413,16 @@ describe("shared ACPX engine runtime behavior", () => {
     } as never);
 
     expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe("streamed hello");
+    expect(logs).toContainEqual({
+      stream: "stdout",
+      text: `${JSON.stringify({
+        type: "acpx.text_delta",
+        text: "private reasoning",
+        channel: "thought",
+        tag: "reasoning_chunk",
+      })}\n`,
+    });
     expect(logs).toContainEqual({
       stream: "stdout",
       text: `${JSON.stringify({
