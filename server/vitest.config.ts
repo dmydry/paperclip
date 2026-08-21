@@ -3,10 +3,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    // Server suites boot and tear down embedded Postgres fixtures. Paper-01
-    // serial shards have crossed 30s during loaded runs, so keep 60s headroom.
-    hookTimeout: 60_000,
-    teardownTimeout: 60_000,
+    include: ["src/**/*.test.ts"],
+    // Each server suite boots + tears down its own embedded Postgres in
+    // beforeAll/afterAll. Under the loaded serial shard (maxWorkers=1) the
+    // graceful shutdown can occasionally cross vitest's default 10s hookTimeout,
+    // producing flaky "Hook timed out in 10000ms" afterAll failures on CI. Give
+    // the boot/teardown hooks generous headroom; 30s is far above the observed
+    // worst-case teardown yet still catches a genuinely hung hook. teardownTimeout
+    // mirrors it for the same reason.
+    hookTimeout: 30000,
+    teardownTimeout: 30000,
     isolate: true,
     maxConcurrency: 1,
     maxWorkers: 1,

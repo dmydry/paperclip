@@ -300,7 +300,10 @@ describe("server adapter registry", () => {
     await expect(listAdapterModelProfiles("codex_subscription_2_local")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "gpt-5.5" }),
+        adapterConfig: expect.objectContaining({
+          model: "gpt-5.6-terra",
+          modelReasoningEffort: "xhigh",
+        }),
         source: "adapter_default",
       }),
     ]);

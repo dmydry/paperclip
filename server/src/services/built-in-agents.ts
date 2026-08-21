@@ -19,7 +19,6 @@ import {
   withBuiltInAgentMarker,
 } from "./built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
-import { instanceSettingsService } from "./instance-settings.js";
 import { routineService } from "./routines.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
@@ -470,6 +469,10 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
 ]);
 
 const DEFINITIONS_BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.key, definition]));
+
+// Existing opt-in bundles are reconciled on startup, but no built-in agent is
+// created for a fresh company unless its key is explicitly allowlisted here.
+const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([]);
 
 const ROOT_AGENT_DEFAULT_CHANGE_GRANTS: PermissionKey[] = ["agents:configure", "skills:create"];
 const BUILT_IN_AGENT_DEFAULT_GRANTS: Record<string, PermissionKey[]> = {
@@ -1946,11 +1949,10 @@ export function builtInAgentService(db: Db) {
     const company = await ensureCompany(companyId);
     let autoEnsured = 0;
     let pendingApprovals = 0;
-    const experimental = await instanceSettingsService(db).getExperimental();
-    const bundledDefinitions = experimental.enableBuiltInAgents
-      ? DEFINITIONS.filter((entry) => entry.bundle)
-      : [];
-    for (const definition of bundledDefinitions) {
+    for (const definition of DEFINITIONS.filter((entry) => entry.bundle)) {
+      const existing = await findSingleAgent(companyId, definition);
+      const shouldProvision = existing !== null || AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key);
+      if (!shouldProvision) continue;
       if (company.requireBoardApprovalForNewAgents) {
         const result = await provision(companyId, definition.key);
         if (result.approval) pendingApprovals += 1;

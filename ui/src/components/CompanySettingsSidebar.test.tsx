@@ -123,7 +123,7 @@ describe("CompanySettingsSidebar", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the company back link and the settings sections in the sidebar", async () => {
+  it("renders one unified settings list without company or instance headers", async () => {
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -139,9 +139,8 @@ describe("CompanySettingsSidebar", () => {
     await flushReact();
 
     expect(container.textContent).toContain("Paperclip");
-    expect(container.textContent).toContain("Company Settings");
-    expect(container.textContent).toContain("Company settings");
-    expect(container.textContent).toContain("Instance settings");
+    expect(container.textContent).not.toContain("Company Settings");
+    expect(container.textContent).not.toContain("Instance Settings");
     expect(container.textContent).toContain("General");
     expect(container.textContent).toContain("Environments");
     expect(container.textContent).toContain("Export");
@@ -149,6 +148,8 @@ describe("CompanySettingsSidebar", () => {
     expect(container.textContent).toContain("Members");
     expect(container.textContent).toContain("Invites");
     expect(container.textContent).toContain("Secrets");
+    expect(container.textContent).toContain("Access");
+    expect(container.textContent).toContain("Heartbeats");
     expect(container.textContent).not.toContain("Tools & Access");
     expect(sidebarNavItemMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -174,6 +175,20 @@ describe("CompanySettingsSidebar", () => {
       expect.objectContaining({
         to: "/company/settings/instance/environments",
         label: "Environments",
+        end: true,
+      }),
+    );
+    expect(sidebarNavItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/company/settings/instance/access",
+        label: "Access",
+        end: true,
+      }),
+    );
+    expect(sidebarNavItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/company/settings/instance/heartbeats",
+        label: "Heartbeats",
         end: true,
       }),
     );
@@ -206,13 +221,11 @@ describe("CompanySettingsSidebar", () => {
         end: true,
       }),
     );
-    expect(sidebarNavItemMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: "/company/settings/instance/general",
-        label: "General",
-        end: true,
-      }),
-    );
+    expect(new Set(
+      sidebarNavItemMock.mock.calls
+        .filter(([props]) => props.label === "General")
+        .map(([props]) => props.to),
+    )).toEqual(new Set(["/company/settings"]));
     expect(sidebarNavItemMock).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "/company/settings/instance/plugins",

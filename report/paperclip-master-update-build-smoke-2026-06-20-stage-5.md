@@ -60,7 +60,7 @@ Passed:
 Note: direct `pnpm --filter @paperclipai/server start` in the monorepo candidate failed because Node attempted to load the workspace `packages/db/src/index.ts` through the built server entrypoint. The disposable smoke therefore used the established source-mode CLI path:
 
 ```bash
-pnpm paperclipai run --data-dir /tmp/paperclip-stage5-20260620.IuCmD9
+npx paperclipai run --data-dir /tmp/paperclip-stage5-20260620.IuCmD9
 ```
 
 with `PAPERCLIP_UI_DEV_MIDDLEWARE=false`, `HEARTBEAT_SCHEDULER_ENABLED=false`, and the disposable config path. The server banner confirmed `static-ui` mode and the prepared UI bundle was served.

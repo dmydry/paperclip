@@ -23,9 +23,13 @@ import { roleLabels } from "../components/agent-config-primitives";
 import {
   AgentConfigForm,
   AdapterEnvironmentResult,
+  AdapterLoginPanel,
+  type AdapterLoginDescriptor,
   type CreateConfigValues,
 } from "../components/AgentConfigForm";
 import { defaultCreateValues } from "../components/agent-config-defaults";
+import { buildFixedClaudeOAuthBinding } from "../components/environment-variables-editor/model";
+import type { EnvBinding } from "@paperclipai/shared";
 import { getUIAdapter, listUIAdapters } from "../adapters";
 import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { isValidAdapterType } from "../adapters/metadata";
@@ -39,6 +43,7 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
+import { DEFAULT_KIMI_LOCAL_MODEL } from "@paperclipai/adapter-kimi-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL, isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
 
 const CODEX_SUBSCRIPTION_2_DEFAULT_MODEL = "gpt-5.5";
@@ -54,6 +59,8 @@ function createValuesForAdapterType(
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
   } else if (adapterType === "gemini_local") {
     nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
+  } else if (adapterType === "kimi_local") {
+    nextValues.model = DEFAULT_KIMI_LOCAL_MODEL;
   } else if (adapterType === "cursor") {
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
   } else if (adapterType === "opencode_local") {
@@ -96,9 +103,11 @@ export function NewAgent() {
   const [testAgentFeedback, setTestAgentFeedback] = useState<{
     errorMessage: string | null;
     result: AdapterEnvironmentTestResult | null;
+    login: AdapterLoginDescriptor | null;
   }>({
     errorMessage: null,
     result: null,
+    login: null,
   });
 
   const { data: agents } = useQuery({
@@ -208,6 +217,39 @@ export function NewAgent() {
     });
   }
 
+  // Add the fixed CLAUDE_CODE_OAUTH_TOKEN binding after a Claude subscription
+  // login reaches the server `stored` state. The new-agent page lifts the login
+  // feedback and renders the panel itself, so it holds the stored-session claim
+  // and the fixed binding in the create-mode values here. The claim is a
+  // reference, not a token; the create request sends it, and the server binds
+  // and enforces the token. Keep every unrelated binding.
+  const handleClaudeLoginStored = useCallback((storedSessionId: string) => {
+    setConfigValues((prev) => ({
+      ...prev,
+      envBindings: {
+        ...((prev.envBindings ?? {}) as Record<string, EnvBinding>),
+        ...buildFixedClaudeOAuthBinding(),
+      },
+      claudeStoredSessionId: storedSessionId,
+    }));
+  }, []);
+
+  // Bind the fixed CLAUDE_CODE_OAUTH_TOKEN reference to an existing stored login
+  // with no new login round trip. Add the fixed binding and set the apply-existing
+  // flag on the create-mode values. The create request sends the flag; the server
+  // binds the token only for a user actor and only when a stored value exists.
+  // Keep every unrelated binding.
+  const handleApplyStoredClaudeLogin = useCallback(() => {
+    setConfigValues((prev) => ({
+      ...prev,
+      envBindings: {
+        ...((prev.envBindings ?? {}) as Record<string, EnvBinding>),
+        ...buildFixedClaudeOAuthBinding(),
+      },
+      claudeApplyStoredLogin: true,
+    }));
+  }, []);
+
   const handleTestAgentActionChange = useCallback((fn: (() => void) | null) => {
     setTestAgentAction(() => fn);
   }, []);
@@ -219,6 +261,7 @@ export function NewAgent() {
   const handleTestAgentFeedbackChange = useCallback((feedback: {
     errorMessage: string | null;
     result: AdapterEnvironmentTestResult | null;
+    login: AdapterLoginDescriptor | null;
   }) => {
     setTestAgentFeedback(feedback);
   }, []);
@@ -374,6 +417,16 @@ export function NewAgent() {
             )}
             {testAgentFeedback.result && (
               <AdapterEnvironmentResult result={testAgentFeedback.result} />
+            )}
+            {testAgentFeedback.login && (
+              <AdapterLoginPanel
+                key={`${testAgentFeedback.login.adapterType}:${testAgentFeedback.login.environmentId}`}
+                companyId={testAgentFeedback.login.companyId}
+                adapterType={testAgentFeedback.login.adapterType}
+                environmentId={testAgentFeedback.login.environmentId}
+                onStored={handleClaudeLoginStored}
+                onApplyStored={handleApplyStoredClaudeLogin}
+              />
             )}
             <div className="flex items-center justify-between gap-2">
               <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>

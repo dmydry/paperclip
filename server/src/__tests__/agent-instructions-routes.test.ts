@@ -460,7 +460,7 @@ describe("agent instructions bundle routes", () => {
     );
   });
 
-  it("allows CEO agents to update another agent's instructions path", async () => {
+  it("blocks CEO agents from updating another agent's instructions path", async () => {
     mockAgentService.getById.mockImplementation(async (id: string) => {
       if (id === "22222222-2222-4222-8222-222222222222") {
         return {
@@ -487,16 +487,11 @@ describe("agent instructions bundle routes", () => {
         .send({ path: "/tmp/ceo-agent/AGENTS.md" }),
     );
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockAgentService.update).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      expect.objectContaining({
-        adapterConfig: expect.objectContaining({
-          instructionsFilePath: "/tmp/ceo-agent/AGENTS.md",
-        }),
-      }),
-      expect.any(Object),
-    );
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body).toEqual({
+      error: "Only board-authenticated callers can manage instructions path or bundle configuration",
+    });
+    expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
   it("blocks agent-authenticated callers from writing external bundle files", async () => {

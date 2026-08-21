@@ -275,7 +275,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: {},
+          adapterConfig: { engine: "cli" },
         },
         runtime: {
           sessionId: null,
@@ -284,6 +284,7 @@ describe("codex execute", () => {
           taskKey: null,
         },
         config: {
+          engine: "cli",
           command: commandPath,
           cwd: workspace,
           env: {
@@ -377,7 +378,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: {},
+          adapterConfig: { engine: "cli" },
         },
         runtime: {
           sessionId: null,
@@ -386,6 +387,7 @@ describe("codex execute", () => {
           taskKey: null,
         },
         config: {
+          engine: "cli",
           command: commandPath,
           cwd: workspace,
           env: {

@@ -790,7 +790,23 @@ describe.sequential("company portability routes", () => {
       }),
     }));
 
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse(succeeded.body.job.completedAt) + (5 * 60 * 1000) + 1);
+    const completedAtMs = Date.parse(succeeded.body.job.completedAt);
+
+    // A completed job stays resolvable well past the old 5-minute retention so a
+    // user who steps away during a long import never polls into a false 404.
+    const withinWindow = vi.spyOn(Date, "now").mockReturnValue(completedAtMs + (5 * 60 * 1000) + 1);
+    try {
+      const stillThere = await request(app).get(accepted.body.statusUrl).set(cloudHeaders);
+      expect(stillThere.status).toBe(200);
+      expect(stillThere.body.job.status).toBe("succeeded");
+      expect(stillThere.body.job.result.companyId).toBe(companyId);
+    } finally {
+      withinWindow.mockRestore();
+    }
+
+    // Only past the extended 60-minute window is the in-memory record finally
+    // dropped, and only then does the status route report the job as gone.
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(completedAtMs + (60 * 60 * 1000) + 1);
     try {
       const expired = await request(app).get(accepted.body.statusUrl).set(cloudHeaders);
       expect(expired.status).toBe(404);
@@ -843,24 +859,29 @@ describe.sequential("company portability routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it.sequential("keeps global import apply synchronous when Cloud async opt-in is absent", async () => {
+  it.sequential("keeps Cloud-managed global import apply synchronous when async opt-in is absent", async () => {
+    vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", "tenant-secret");
     mockCompanyPortabilityService.importBundle.mockResolvedValueOnce(createImportResult("created"));
-    const app = await createApp(cloudTenantActor());
+    try {
+      const app = await createApp(cloudTenantActor());
 
-    const res = await request(app)
-      .post("/api/companies/import")
-      .set(cloudHeaders)
-      .send(importRequest);
+      const res = await request(app)
+        .post("/api/companies/import")
+        .set(cloudHeaders)
+        .send(importRequest);
 
-    expect(res.status).toBe(200);
-    expect(res.body.company.id).toBe(companyId);
-    expect(res.body.company.action).toBe("created");
-    expect(res.body.job).toBeUndefined();
-    expect(mockCompanyPortabilityService.importBundle).toHaveBeenCalledWith(importRequest, "cloud-user-1", { pauseAutomations: false });
-    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      action: "company.imported",
-      companyId,
-    }));
+      expect(res.status).toBe(200);
+      expect(res.body.company.id).toBe(companyId);
+      expect(res.body.company.action).toBe("created");
+      expect(res.body.job).toBeUndefined();
+      expect(mockCompanyPortabilityService.importBundle).toHaveBeenCalledWith(importRequest, "cloud-user-1", { pauseAutomations: false });
+      expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        action: "company.imported",
+        companyId,
+      }));
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it.sequential("forwards pauseAutomations from the global import body to the portability service", async () => {
