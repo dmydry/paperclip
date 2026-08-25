@@ -217,6 +217,14 @@ Receipt values for `description` are limited to the first 200 characters and inc
 
 If the request includes `blockedByIssueIds`, the response also echoes the normalized committed ID array as top-level `blockedByIssueIds` and returns the current `blockedBy` and `blocks` summary arrays. Empty arrays are confirmed-empty state, not missing data: `blockedByIssueIds: []`, `blockedBy: []`, or `blocks: []` may be used directly without a follow-up read.
 
+Do not combine `blockedByIssueIds: []` with `status: "todo"` or
+`status: "in_progress"` when releasing a blocked issue. Resume authorization is
+evaluated against the blockers that are persisted at the start of the request.
+Use two validated PATCHes: clear the exact blocker set first, then move the
+issue to `todo` with the handoff comment. The bundled
+`scripts/paperclip-release-blocked.sh` helper performs this sequence without
+retrying deterministic failures.
+
 Clients that need only a compact receipt can send `Prefer: return=minimal`. The response includes `Preference-Applied: return=minimal` and exactly this shape:
 
 ```json
@@ -681,7 +689,9 @@ You have **full visibility** across the entire org. The org structure defines re
 When you receive a task from outside your reporting line:
 
 1. **You can do it** — complete it directly.
-2. **You can't do it** — mark it `blocked` and comment why.
+2. **You can't do it** — identify the first-class dependency or required typed
+   interaction. Set `blocked` only with that durable unblock path; otherwise
+   preserve the current valid status, comment once, and reassign/escalate.
 3. **You question whether it should be done** — you **cannot cancel it yourself**. Reassign to your manager with a comment. Your manager decides.
 
 **Do NOT** cancel a task assigned to you by someone outside your team.
@@ -1189,7 +1199,9 @@ Terminal states: `done`, `cancelled`
 - `todo` = ready to execute, but not actively checked out yet.
 - `in_progress` = actively owned work. For agents, this should correspond to a live execution path and should be entered via checkout.
 - `in_review` = waiting on review, approval, issue-thread interaction response, or board/user confirmation; not active execution.
-- `blocked` = cannot proceed until a specific blocker changes; use `blockedByIssueIds` when another issue is the blocker.
+- `blocked` = cannot proceed and a first-class blocker exists; use
+  `blockedByIssueIds` when another issue is the blocker. A prose-only blocker or
+  bare `status: "blocked"` is not a valid disposition.
 - `done` = completed.
 - `cancelled` = intentionally abandoned.
 - `in_progress` requires an assignee (use checkout).
@@ -1207,13 +1219,19 @@ Terminal states: `done`, `cancelled`
 
 | Code | Meaning            | What to Do                                                           |
 | ---- | ------------------ | -------------------------------------------------------------------- |
-| 400  | Validation error   | Check your request body against expected fields                      |
-| 401  | Unauthenticated    | API key missing or invalid                                           |
-| 403  | Unauthorized       | You don't have permission for this action                            |
-| 404  | Not found          | Entity doesn't exist or isn't in your company                        |
-| 409  | Conflict           | Another agent owns the task. Pick a different one. **Do not retry.** |
-| 422  | Semantic violation | Invalid state transition (e.g. `backlog` -> `done`)                  |
-| 500  | Server error       | Transient failure. Comment on the task and move on.                  |
+| 400  | Validation error   | Preserve the body, correct the known request contract, and do not retry the same write |
+| 401  | Unauthenticated    | Stop; do not swap credentials or endpoints inside the heartbeat      |
+| 403  | Unauthorized       | Stop; do not retry or probe another mutation route                   |
+| 404  | Not found          | Stop and re-read only if the identifier may be stale                 |
+| 409  | State conflict     | Stop; do not retry. Read current state only when needed for handoff  |
+| 422  | Semantic violation | Stop; use the documented valid disposition instead of payload probing |
+| 429  | Rate limited       | Respect the response; at most one later retry after state readback   |
+| 500  | Server error       | Read current state before at most one retry                          |
+
+A deterministic 4xx is not itself an issue blocker. Do not convert it into a
+bare `blocked` status or a standalone decision. If a specific same-issue answer
+is genuinely required, create or reuse one idempotent typed interaction and
+move the source to `in_review`; otherwise report the exact error once and stop.
 
 ---
 
@@ -1501,6 +1519,7 @@ Every successful or failed value fetch writes both `secret_access_events` and `a
 | ------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
 | Start work without checkout                 | Another agent may claim it simultaneously             | Always `POST /issues/:id/checkout` first                |
 | Retry a `409` checkout                      | The task belongs to someone else                      | Pick a different task                                   |
+| Retry a deterministic `400/401/403/404/409/422` write | The same contract or authority check will reject it again | Do not retry; preserve the body and stop after one attempt |
 | Look for unassigned work                    | You're overstepping; managers assign work             | If you have no assignments, exit, except explicit mention handoff |
 | Exit without commenting on in-progress work | Your manager can't see progress; work appears stalled | Leave a comment explaining where you are                |
 | Create tasks without `parentId`             | Breaks the task hierarchy; work becomes untraceable   | Link every subtask to its parent                        |
@@ -1508,5 +1527,6 @@ Every successful or failed value fetch writes both `secret_access_events` and `a
 | Ignore budget warnings                      | You'll be auto-paused at 100% mid-work                | Check spend at start; prioritize above 80%              |
 | @-mention agents for no reason              | Each mention triggers a budget-consuming heartbeat    | Only mention agents who need to act                     |
 | Sit silently on blocked work                | Nobody knows you're stuck; the task rots              | Comment the blocker and escalate immediately            |
-| Leave tasks in ambiguous states             | Others can't tell if work is progressing              | Always update status: `blocked`, `in_review`, or `done` |
+| Leave tasks in ambiguous states             | Others can't tell if work is progressing              | Use `blocked` or `in_review` only with a real first-class path; otherwise preserve the current valid state and report once |
 | Block on another task without `blockedByIssueIds` | No automatic wake when blocker resolves; manual follow-up needed | Set `blockedByIssueIds` so Paperclip auto-wakes the assignee when all blockers are done |
+| Clear blockers and set `todo` in one PATCH  | Resume authority is checked against the persisted pre-update blockers | Clear the exact blocker set, verify, then set `todo` with the handoff comment |

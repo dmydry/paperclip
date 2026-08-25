@@ -190,7 +190,10 @@ If `currentParticipant` does not match you, do not try to advance the stage — 
 - Treat comments, documents, screenshots, work products, and `Remaining` bullets as evidence. They are not valid liveness paths by themselves.
 - Use child issues for parallel or long delegated work; do not busy-poll agents, sessions, child issues, or processes waiting for completion.
 - If your heartbeat creates a pending board/user interaction or approval before more work can proceed, leave the source issue in an explicit waiting posture before you exit. Prefer `in_review` for review, approval, `request_confirmation`, `ask_user_questions`, and `suggest_tasks` waits. Use `blocked` with `blockedByIssueIds` when another issue is the blocker.
-- If blocked, move the issue to `blocked` with the unblock owner and exact action needed.
+- If work truly cannot continue, leave a valid waiting path. Use `blocked` only
+  with unresolved `blockedByIssueIds` or another server-supported first-class
+  blocker. Use `in_review` for a pending interaction, approval, reviewer, or
+  scheduled monitor. A comment naming an owner is evidence, not a waiting path.
 - Respect budget, pause/cancel, approval gates, execution policy stages, and company boundaries.
 
 ### Generated Artifacts and Work Products
@@ -205,15 +208,30 @@ For technical upload instructions, read `references/artifacts.md`.
 
 **Step 8 — Update status and communicate.** Always include the run ID header.
 
-**Bounded write retry.** If the same control-plane write fails twice consecutively, stop retrying that write for the rest of the heartbeat. Continue any useful work that does not depend on it, report the failed write in your final response, and rely on the adapter/runtime status channel as the sanctioned fallback. Do not burn additional tool calls repeatedly attempting the same comment or status mutation in a degraded environment.
+**Write failures are not retry loops.** Preserve the exact response body and
+classify it once:
 
-If you are blocked at any point, you MUST update the issue to `blocked` before exiting the heartbeat, with a comment that explains the blocker and who needs to act.
+- `400`, `401`, `403`, `404`, `409`, and `422` are deterministic for the
+  submitted request. Do not retry the same write, change endpoints/tokens, or
+  probe alternate mutation shapes. A rejected write does not by itself make
+  the issue `blocked`.
+- For a network failure, `429`, or `5xx`, read current issue state before at
+  most one retry. If the first request may have committed, do not duplicate it.
+- Never create a standalone decision or approval merely to make a rejected
+  disposition look live. Same-issue waits use one typed issue-thread
+  interaction with a deterministic idempotency key. Create it only when a
+  specific response is genuinely required, then move the source to `in_review`.
+- If no valid disposition can be written, keep the last valid state, report the
+  exact error once in the final response, and stop. Do not spend the remainder
+  of the heartbeat inventing status combinations.
 
 Before ending any heartbeat, apply this final-disposition checklist:
 
 - `done`: the requested work is complete, verification is recorded, and no follow-up remains on this issue.
 - `in_review`: a real reviewer path exists, such as a typed execution participant, board/user owner, linked approval, pending interaction, or an actually-scheduled issue monitor (non-null `monitorNextCheckAt`, not merely described in a comment) that will wake the assignee later. Assignment to yourself plus a "please review" comment is not a review path.
-- `blocked`: work cannot continue until first-class `blockedByIssueIds` resolve or a named owner takes a concrete unblock action.
+- `blocked`: work cannot continue and the issue has unresolved
+  `blockedByIssueIds` or another server-supported first-class blocker. A named
+  owner in prose is not sufficient.
 - Delegated follow-up: create the follow-up issue directly, link it with `parentId`/`goalId`, and use blockers when the current issue must wait for that work.
 - Explicit continuation: keep the issue `in_progress` only when there is an active run, queued continuation, or a real scheduled monitor/recovery path (not a narrated one) that will wake the responsible assignee. Successful artifact work left in `in_progress` with no live path is invalid; update the status/path instead.
 
@@ -244,7 +262,10 @@ Status values: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`,
 - `todo` — ready and actionable, but not checked out yet. Use for newly assigned or resumable work; don't PATCH into `in_progress` just to signal intent — enter `in_progress` by checkout.
 - `in_progress` — actively owned, execution-backed work.
 - `in_review` — paused pending reviewer/approver/board/user feedback. Use when handing work off for review, plan confirmation, issue-thread interaction response, or approval. This is a healthy waiting path, not a synonym for done. If a human asks to take the task back, reassign to them and set `in_review`.
-- `blocked` — cannot proceed until something specific changes. Always name the blocker and who must act, and prefer `blockedByIssueIds` over free-text when another issue is the blocker. `parentId` alone does not imply a blocker.
+- `blocked` — cannot proceed and a first-class blocker exists. Use
+  `blockedByIssueIds` when another issue is the blocker. Do not submit bare
+  `status: "blocked"`; a prose comment or `parentId` does not satisfy the
+  disposition contract.
 - `done` — work complete, no follow-up on this issue.
 - `cancelled` — intentionally abandoned, not to be resumed.
 
@@ -254,6 +275,8 @@ Preferred write helper for this workspace:
   - `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh update <ISSUE_ID> --status <STATUS> --comment "text"`
 - comment only:
   - `/Users/dmydry/projects/paper/scripts/paperclip_issue_write.sh comment <ISSUE_ID> --body "text"`
+- release a blocked issue after its exact dependency is complete:
+  - `"${CODEX_HOME:-$HOME/.codex}/skills/paperclip/scripts/paperclip-release-blocked.sh" --issue-id <ISSUE_ID> --expected-blocker <BLOCKER_ID_OR_IDENTIFIER> --comment-file <FILE>`
 
 Use this helper when possible instead of hand-building JSON, heredocs, or inline shell-escaped comment payloads.
 
@@ -304,6 +327,15 @@ PATCH /api/issues/{issueId}
 ```
 
 The array **replaces** the current set on each update — send `[]` to clear. Issues cannot block themselves; circular chains are rejected.
+
+**Releasing a blocked issue is two writes.** Do not combine
+`status: "todo"` or `status: "in_progress"` with `blockedByIssueIds: []` in one
+PATCH. Resume authorization is evaluated against the currently persisted
+blockers before the replacement set is committed, so that atomic-looking shape
+can return `409`. Use the bundled `paperclip-release-blocked.sh` helper. It
+preflights the exact blocker set, clears it, verifies the response, then moves
+the issue to `todo` with the handoff comment. It is idempotent after a successful
+release and never retries a failed request.
 
 **Read blockers** from `GET /api/issues/{issueId}`: `blockedBy` (issues blocking this one) and `blocks` (issues this one blocks), each with id/identifier/title/status/priority/assignee.
 
@@ -590,6 +622,9 @@ Exact response fields are documented in `skills/paperclip/references/api-referen
 ## Critical Rules
 
 - **Never retry a 409.** The task belongs to someone else.
+- **Never retry deterministic 4xx writes.** Preserve the response body, fix the
+  request contract only when the correct shape is known, and do not probe with
+  alternate endpoints or credentials.
 - **Never look for unassigned work.** No assignments = exit.
 - **Self-assign only for explicit @-mention handoff.** Requires a mention-triggered wake with `PAPERCLIP_WAKE_COMMENT_ID` and a comment that clearly directs you to do the task. Use checkout (never direct assignee patch).
 - **Honor "send it back to me" requests from board users.** If a board/user asks for review handoff (e.g. "let me review it", "assign it back to me"), reassign to them with `assigneeAgentId: null` and `assigneeUserId: "<requesting-user-id>"`, typically setting status to `in_review` instead of `done`. Resolve the user id from the triggering comment's `authorUserId` when available, else the issue's `createdByUserId` if it matches the requester context.
@@ -600,6 +635,8 @@ Exact response fields are documented in `skills/paperclip/references/api-referen
 - **Preserve workspace continuity for follow-ups.** Child issues inherit execution workspace from `parentId` server-side. For non-child follow-ups on the same checkout/worktree, send `inheritExecutionWorkspaceFromIssueId` explicitly.
 - **Never cancel cross-team tasks.** Reassign to your manager with a comment.
 - **Use first-class blockers** (`blockedByIssueIds`) rather than free-text "blocked by X" comments.
+- **Never use bare `blocked`.** A comment naming a blocker is not a durable
+  blocker, and a failed mutation is not itself a reason to set `blocked`.
 - **Say only what you actually scheduled.** Never tell a user a "watcher"/monitor will wake you unless you scheduled a real issue monitor (non-null `monitorNextCheckAt`), and never imply a live watcher on a task you mark `done` — see **Monitors and Watchers**.
 - **On a blocked task with no new context, don't re-comment** — see the blocked-task dedup rule in Step 4.
 - **@-mentions** trigger heartbeats — use sparingly, they cost budget. For machine-authored comments, resolve the target agent and emit a structured mention as `[@Agent Name](agent://<agent-id>)` instead of raw `@AgentName` text.

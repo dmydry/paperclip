@@ -90,6 +90,24 @@ describe("paperclip skill utils", () => {
     expect(skillBody).toContain("`assigneeUserId` is null");
   });
 
+  it("documents bounded issue disposition recovery and ships the blocker-release helper", async () => {
+    const skillBody = await fs.readFile(path.resolve("skills/paperclip/SKILL.md"), "utf8");
+    const apiReference = await fs.readFile(path.resolve("skills/paperclip/references/api-reference.md"), "utf8");
+
+    for (const body of [skillBody, apiReference]) {
+      expect(body).toContain("deterministic");
+      expect(body).toContain("Do not retry");
+      expect(body).toContain("paperclip-release-blocked.sh");
+      expect(body).toContain('blockedByIssueIds: []');
+      expect(body).toContain('status: "todo"');
+    }
+    expect(skillBody).toContain("Never use bare `blocked`");
+    expect(skillBody).toContain("standalone decision");
+    await expect(
+      fs.access(path.resolve("skills/paperclip/scripts/paperclip-release-blocked.sh")),
+    ).resolves.toBeUndefined();
+  });
+
   it("keeps the create-issue-interaction-ui guide as a maintainer-only skill", async () => {
     const skillPath = path.resolve(".agents/skills/create-issue-interaction-ui/SKILL.md");
     const skillBody = await fs.readFile(skillPath, "utf8");
