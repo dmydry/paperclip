@@ -25,6 +25,9 @@ const rootPackage = JSON.parse(await readFile(new URL("../package.json", import.
 const adapterUtilsPackage = JSON.parse(
   await readFile(new URL("../packages/adapter-utils/package.json", import.meta.url), "utf8"),
 );
+const codexLocalPackage = JSON.parse(
+  await readFile(new URL("../packages/adapters/codex-local/package.json", import.meta.url), "utf8"),
+);
 const dbPackage = JSON.parse(
   await readFile(new URL("../packages/db/package.json", import.meta.url), "utf8"),
 );
@@ -41,6 +44,21 @@ test("published packages preserve the patched ACPX runtime", () => {
   assert.deepEqual(adapterUtilsPackage.bundleDependencies, ["acpx"]);
   assert.equal(bundledCliNpmDependencies.has("acpx"), true);
   assert.equal(cliEsbuildConfig.external.includes("acpx"), false);
+});
+
+test("Codex ACP enables runtime-provided MCP servers", async () => {
+  assert.equal(
+    rootPackage.pnpm.patchedDependencies["@agentclientprotocol/codex-acp@1.2.0"],
+    "patches/@agentclientprotocol__codex-acp@1.2.0.patch",
+  );
+  assert.equal(codexLocalPackage.dependencies["@agentclientprotocol/codex-acp"], "^1.2.0");
+
+  const patch = await readFile(
+    new URL("../patches/@agentclientprotocol__codex-acp@1.2.0.patch", import.meta.url),
+    "utf8",
+  );
+  assert.match(patch, /case "http":[\s\S]*?"enabled": true/);
+  assert.match(patch, /return \{\n\+      "enabled": true,\n\s+"command": mcpServer\.command/);
 });
 
 test("published packages preserve the patched embedded-postgres runtime", () => {
