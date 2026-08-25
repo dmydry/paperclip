@@ -114,6 +114,12 @@ function createApp(db: any, deploymentMode: "authenticated" | "local_trusted" = 
     assertCompanyAccess(req, req.params.companyId);
     res.json({ id: req.params.issueId, writable: true });
   });
+  app.post("/mcp/gateways/:gatewayPublicId", (req, res) => {
+    res.json(req.actor);
+  });
+  app.post("/api/tool-gateway/gateways/:gatewayId/mcp", (req, res) => {
+    res.json(req.actor);
+  });
   app.use(errorHandler);
   return app;
 }
@@ -201,6 +207,21 @@ describe("agent auth middleware", () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toContain(error);
     expect(commentWrites).toBe(0);
+  });
+
+  it.each([
+    "/mcp/gateways/gw_1234567890abcdef",
+    `/api/tool-gateway/gateways/${randomUUID()}/mcp`,
+  ])("leaves %s Bearer authentication to the named MCP gateway", async (path) => {
+    const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
+
+    const res = await request(createApp(db, "local_trusted"))
+      .post(path)
+      .set("Authorization", "Bearer pcgw_12345678.release-smoke")
+      .send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ type: "none", source: "none" });
   });
 
   it.each([

@@ -72,6 +72,11 @@ function invalidAgentTokenMessage(token: string) {
   return "Agent token did not verify; obtain fresh credentials and retry";
 }
 
+function isMcpGatewayProtocolPath(path: string) {
+  return /^\/mcp\/gateways\/[^/]+\/?$/.test(path)
+    || /^\/api\/tool-gateway\/gateways\/[^/]+\/mcp\/?$/.test(path);
+}
+
 async function resolveLegacyRunResponsibleUserId(
   db: Db,
   input: { companyId: string; agentId: string; runId: string },
@@ -222,6 +227,15 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const authHeader = req.header("authorization");
     const hasBearerCredentials = /^bearer(?:\s|$)/i.test(authHeader ?? "");
+    if (hasBearerCredentials && isMcpGatewayProtocolPath(req.path)) {
+      // Named MCP gateway endpoints own their Bearer credential domain. Their
+      // pcgw_* tokens are intentionally not board keys or agent credentials,
+      // and the gateway service performs token verification, scoping, expiry,
+      // rate limiting, and auditing. Do not reject those tokens here first.
+      req.actor = { type: "none", source: "none" };
+      next();
+      return;
+    }
     if (!hasBearerCredentials) {
       if (opts.deploymentMode === "authenticated" && opts.resolveSession) {
         const cloudTenantActor = await resolveCloudTenantActor(db, req);
