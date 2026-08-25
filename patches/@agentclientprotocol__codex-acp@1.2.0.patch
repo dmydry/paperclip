@@ -1,0 +1,19 @@
+diff --git a/dist/index.js b/dist/index.js
+index 8d55e0115a7647f309f69e0235c4d2943f559c4e..98f49d9bb208e05ba20d7538a94c4ad9ca51cb81 100755
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -27015,12 +27015,14 @@ var CodexAcpClient = class {
+           throw RequestError.invalidRequest("Codex doesn't support MCP SSE transport protocol");
+         case "http":
+           return {
++            "enabled": true,
+             "url": mcpServer.url,
+             "http_headers": Object.fromEntries(mcpServer.headers.map((h) => [h.name, h.value]))
+           };
+       }
+     }
+     return {
++      "enabled": true,
+       "command": mcpServer.command,
+       "args": mcpServer.args,
+       "env": Object.fromEntries(mcpServer.env.map((env) => [env.name, env.value]))
