@@ -14,6 +14,7 @@ const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
   codexHome: process.env.CODEX_HOME || null,
+  codexSqliteHome: process.env.CODEX_SQLITE_HOME || null,
   codexConfigContents: process.env.CODEX_HOME && fs.existsSync(process.env.CODEX_HOME + "/config.toml")
     ? fs.readFileSync(process.env.CODEX_HOME + "/config.toml", "utf8")
     : null,
@@ -52,6 +53,7 @@ type CapturePayload = {
   argv: string[];
   prompt: string;
   codexHome: string | null;
+  codexSqliteHome?: string | null;
   codexConfigContents?: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipApiUrl?: string | null;
@@ -134,6 +136,8 @@ describe("codex execute", () => {
       "default",
       "companies",
       "company-1",
+      "agents",
+      "agent-1",
       "codex-home",
     );
     await fs.mkdir(workspace, { recursive: true });
@@ -194,6 +198,7 @@ describe("codex execute", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.codexHome).toBe(managedCodexHome);
+      expect(capture.codexSqliteHome).toBe(managedCodexHome);
 
       const managedAuth = path.join(managedCodexHome, "auth.json");
       const managedConfig = path.join(managedCodexHome, "config.toml");
@@ -236,6 +241,8 @@ describe("codex execute", () => {
       "default",
       "companies",
       "company-1",
+      "agents",
+      "agent-1",
       "codex-home",
     );
     await fs.mkdir(workspace, { recursive: true });
@@ -320,6 +327,99 @@ describe("codex execute", () => {
       else process.env.CODEX_HOME = previousCodexHome;
       if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates concurrent Codex CLI skill reconciliation per agent", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-concurrent-skills-"));
+    const commandPath = path.join(root, "codex");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const skillRoot = path.join(root, "skills");
+    const alphaSource = path.join(skillRoot, "alpha");
+    const betaSource = path.join(skillRoot, "beta");
+    await Promise.all([
+      fs.mkdir(sharedCodexHome, { recursive: true }),
+      fs.mkdir(alphaSource, { recursive: true }),
+      fs.mkdir(betaSource, { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(path.join(sharedCodexHome, "auth.json"), `${fakeCodexAuthJson}\n`, "utf8"),
+      fs.writeFile(path.join(alphaSource, "SKILL.md"), "# alpha\n", "utf8"),
+      fs.writeFile(path.join(betaSource, "SKILL.md"), "# beta\n", "utf8"),
+      writeFakeCodexCommand(commandPath),
+    ]);
+
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+    process.env.CODEX_HOME = sharedCodexHome;
+
+    const skillEntries = [
+      { key: "test/alpha", runtimeName: "alpha", source: alphaSource, required: false },
+      { key: "test/beta", runtimeName: "beta", source: betaSource, required: false },
+    ];
+    const runAgent = async (agentId: string, desiredSkill: string) => {
+      const workspace = path.join(root, `workspace-${agentId}`);
+      const capturePath = path.join(root, `capture-${agentId}.json`);
+      await fs.mkdir(workspace, { recursive: true });
+      return execute({
+        runId: `run-${agentId}`,
+        agent: {
+          id: agentId,
+          companyId: "company-1",
+          name: agentId,
+          adapterType: "codex_local",
+          adapterConfig: { engine: "cli" },
+        },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          engine: "cli",
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Follow the paperclip heartbeat.",
+          paperclipRuntimeSkills: skillEntries,
+          paperclipSkillSync: { desiredSkills: [desiredSkill] },
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+    };
+
+    try {
+      const [alphaResult, betaResult] = await Promise.all([
+        runAgent("agent-alpha", "test/alpha"),
+        runAgent("agent-beta", "test/beta"),
+      ]);
+      expect(alphaResult.exitCode).toBe(0);
+      expect(betaResult.exitCode).toBe(0);
+
+      const agentsRoot = path.join(
+        paperclipHome,
+        "instances",
+        "test-instance",
+        "companies",
+        "company-1",
+        "agents",
+      );
+      const alphaHome = path.join(agentsRoot, "agent-alpha", "codex-home");
+      const betaHome = path.join(agentsRoot, "agent-beta", "codex-home");
+      expect(await fs.readFile(path.join(alphaHome, "skills", "alpha", "SKILL.md"), "utf8")).toBe("# alpha\n");
+      await expect(fs.access(path.join(alphaHome, "skills", "beta"))).rejects.toThrow();
+      expect(await fs.readFile(path.join(betaHome, "skills", "beta", "SKILL.md"), "utf8")).toBe("# beta\n");
+      await expect(fs.access(path.join(betaHome, "skills", "alpha"))).rejects.toThrow();
+    } finally {
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -449,6 +549,8 @@ describe("codex execute", () => {
       "default",
       "companies",
       "company-1",
+      "agents",
+      "agent-1",
       "codex-home",
     );
     await fs.mkdir(workspace, { recursive: true });
@@ -1552,6 +1654,8 @@ process.exit(1);
       "worktree-1",
       "companies",
       "company-1",
+      "agents",
+      "agent-1",
       "codex-home",
     );
     const homeSkill = path.join(isolatedCodexHome, "skills", "paperclip");

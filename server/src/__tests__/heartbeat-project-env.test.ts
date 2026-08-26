@@ -649,6 +649,41 @@ describe("resolveExecutionRunAdapterConfig codex_local credential pre-dispatch g
     expect(result.resolvedConfig.command).toBe("codex");
   });
 
+  it("dispatches codex_subscription_2_local from its dedicated auth source", async () => {
+    const { root, managedAgentHome } = await stubManagedCodexEnv({ seedSharedAuth: false });
+    const subscriptionHome = path.join(root, "subscription-2-home");
+    await fs.mkdir(subscriptionHome, { recursive: true });
+    await fs.writeFile(
+      path.join(subscriptionHome, "auth.json"),
+      '{"OPENAI_API_KEY":"sk-subscription-2"}\n',
+      "utf8",
+    );
+    vi.stubEnv("PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME", subscriptionHome);
+    const resolveAdapterConfigForRuntime = vi.fn().mockResolvedValue({
+      config: { command: "codex", env: { CODEX_HOME: managedAgentHome, OPENAI_API_KEY: "" } },
+      secretKeys: new Set<string>(),
+      manifest: [],
+    });
+
+    await expect(
+      resolveExecutionRunAdapterConfig({
+        companyId: "company-1",
+        agentId: "agent-1",
+        adapterType: "codex_subscription_2_local",
+        executionRunConfig: {
+          command: "codex",
+          env: { CODEX_HOME: managedAgentHome, OPENAI_API_KEY: "" },
+        },
+        projectEnv: null,
+        secretsSvc: {
+          resolveAdapterConfigForRuntime,
+          resolveEnvBindings: vi.fn(),
+          collectMissingRuntimeBindings: vi.fn().mockResolvedValue([]),
+        } as any,
+      }),
+    ).resolves.toMatchObject({ resolvedConfig: expect.objectContaining({ command: "codex" }) });
+  });
+
   it("does not gate non-codex adapters", async () => {
     await stubManagedCodexEnv({ seedSharedAuth: false });
     const resolveAdapterConfigForRuntime = vi.fn().mockResolvedValue({

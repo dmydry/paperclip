@@ -4,15 +4,14 @@ import type {
   AdapterRuntimeCommandSpec,
   ServerAdapterModule,
 } from "./types.js";
-import path from "node:path";
 import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
 import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
+import { resolveCodexSubscription2Home } from "./codex-subscription-home.js";
 import {
   buildSandboxNpmInstallCommand,
   getAdapterSessionManagement,
 } from "@paperclipai/adapter-utils";
 import type { AdapterLoginCapability } from "@paperclipai/adapter-utils";
-import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-utils/server-utils";
 import {
   execute as claudeExecute,
   listClaudeSkills,
@@ -42,6 +41,7 @@ import {
   getConfigSchema as getCodexConfigSchema,
   CODEX_DEVICE_LOGIN_COMMAND,
   parseDeviceLoginPrompt,
+  resolveManagedCodexAgentHomeDir,
 } from "@paperclipai/adapter-codex-local/server";
 import {
   agentConfigurationDoc as codexAgentConfigurationDoc,
@@ -258,33 +258,31 @@ function readPlainEnvValue(value: unknown): string | null {
   return record.type === "plain" ? readNonEmptyString(record.value) : null;
 }
 
-function resolveCodexSubscription2Home(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = readNonEmptyString(env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME);
-  if (explicit) return path.resolve(explicit);
-  const instanceRoot = resolvePaperclipInstanceRootForAdapter({
-    homeDir: readNonEmptyString(env.PAPERCLIP_HOME) ?? undefined,
-    instanceId: readNonEmptyString(env.PAPERCLIP_INSTANCE_ID) ?? undefined,
-    env,
-  });
-  return path.resolve(instanceRoot, "codex-homes", "subscription-2");
-}
-
 function hasOwnEnvValue(env: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(env, key);
 }
 
-function withCodexSubscription2Defaults(config: Record<string, unknown>): Record<string, unknown> {
+function withCodexSubscription2Defaults(
+  config: Record<string, unknown>,
+  runtimeCodexHome?: string,
+): Record<string, unknown> {
   const env = readRecord(config.env);
   const existingCodexHome = readPlainEnvValue(env.CODEX_HOME);
-  const nextEnv: Record<string, unknown> = {
-    ...env,
-    CODEX_HOME: existingCodexHome ?? resolveCodexSubscription2Home(),
-  };
+  const authSourceCodexHome = resolveCodexSubscription2Home();
+  const nextEnv: Record<string, unknown> = { ...env };
+  const hasConfiguredCodexHome = hasOwnEnvValue(env, "CODEX_HOME");
+  if (
+    runtimeCodexHome &&
+    (!hasConfiguredCodexHome || existingCodexHome === authSourceCodexHome)
+  ) {
+    nextEnv.CODEX_HOME = runtimeCodexHome;
+  }
   if (!hasOwnEnvValue(env, "OPENAI_API_KEY")) {
     nextEnv.OPENAI_API_KEY = "";
   }
   return {
     ...config,
+    codexAuthSourceHome: authSourceCodexHome,
     env: nextEnv,
   };
 }
@@ -419,13 +417,21 @@ const codexSubscription2LocalAdapter: ServerAdapterModule = {
   ...codexLocalAdapter,
   type: CODEX_SUBSCRIPTION_2_ADAPTER_TYPE,
   execute: (ctx) => {
-    const config = withCodexSubscription2Defaults(ctx.config);
+    const runtimeCodexHome = resolveManagedCodexAgentHomeDir(
+      process.env,
+      ctx.agent.companyId,
+      ctx.agent.id,
+    );
+    const config = withCodexSubscription2Defaults(ctx.config, runtimeCodexHome);
     return codexExecute({
       ...ctx,
       config,
       agent: {
         ...ctx.agent,
-        adapterConfig: withCodexSubscription2Defaults(readRecord(ctx.agent.adapterConfig)),
+        adapterConfig: withCodexSubscription2Defaults(
+          readRecord(ctx.agent.adapterConfig),
+          runtimeCodexHome,
+        ),
       },
     });
   },
@@ -450,10 +456,10 @@ const codexSubscription2LocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc:
     `${codexAgentConfigurationDoc}\n\n` +
     `# ${CODEX_SUBSCRIPTION_2_ADAPTER_TYPE} Paper-01 alias\n\n` +
-    `This adapter uses the codex_local runtime with CODEX_HOME set to ` +
+    `This adapter seeds each agent's isolated runtime CODEX_HOME from ` +
     `PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME, or the Paperclip instance's ` +
     `codex-homes/subscription-2 directory when that env var is not set. ` +
-    `An explicit adapterConfig.env.CODEX_HOME still takes precedence.`,
+    `A genuine external adapterConfig.env.CODEX_HOME still takes precedence.`,
 };
 
 const cursorLocalAdapter: ServerAdapterModule = {

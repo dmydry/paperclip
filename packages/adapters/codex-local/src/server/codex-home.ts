@@ -117,6 +117,39 @@ export function resolveManagedCodexHomeDir(
     : path.resolve(instanceRoot, "codex-home");
 }
 
+export function resolveManagedCodexAgentHomeDir(
+  env: NodeJS.ProcessEnv,
+  companyId: string,
+  agentId: string,
+): string {
+  const instanceRoot = resolvePaperclipInstanceRootForAdapter({
+    homeDir: nonEmpty(env.PAPERCLIP_HOME) ?? undefined,
+    instanceId: nonEmpty(env.PAPERCLIP_INSTANCE_ID) ?? undefined,
+    env,
+  });
+  return path.resolve(instanceRoot, "companies", companyId, "agents", agentId, "codex-home");
+}
+
+export function resolveCodexAuthSourceHomeDir(
+  configuredAuthSourceHome: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configured = typeof configuredAuthSourceHome === "string"
+    ? nonEmpty(configuredAuthSourceHome)
+    : null;
+  return configured ? path.resolve(configured) : resolveSharedCodexHomeDir(env);
+}
+
+export function withCodexAuthSourceHome(
+  env: NodeJS.ProcessEnv,
+  configuredAuthSourceHome: unknown,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    CODEX_HOME: resolveCodexAuthSourceHomeDir(configuredAuthSourceHome, env),
+  };
+}
+
 /**
  * True when `homePath` lives under the Paperclip-managed company tree
  * (`<instanceRoot>/companies/<companyId>/...`). This covers both the shared
@@ -792,8 +825,11 @@ export type CodexCredentialAuthMode = "api" | "subscription";
 export interface CodexCredentialReadinessInput {
   env?: NodeJS.ProcessEnv;
   companyId: string | undefined;
+  agentId?: string | undefined;
   /** `config.env.CODEX_HOME` for the run, if any. */
   configuredCodexHome: string | null | undefined;
+  /** Subscription/auth home used only to seed a Paperclip-managed runtime home. */
+  authSourceCodexHome?: string | null | undefined;
   /** Resolved `config.env.OPENAI_API_KEY` value (after secret resolution). */
   configuredApiKey: string | null | undefined;
 }
@@ -831,12 +867,16 @@ export async function evaluateCodexCredentialReadiness(
   const configuredRaw = nonEmpty(input.configuredCodexHome ?? undefined);
   const configuredCodexHome = configuredRaw ? path.resolve(configuredRaw) : null;
   const configuredApiKey = nonEmpty(input.configuredApiKey ?? undefined);
-  const sharedSourceHome = resolveSharedCodexHomeDir(env);
+  const sharedSourceHome = resolveCodexAuthSourceHomeDir(input.authSourceCodexHome, env);
 
   const configuredHomeIsManaged =
     configuredCodexHome != null && isManagedCodexHomePath(env, input.companyId, configuredCodexHome);
   const effectiveHomeIsManaged = configuredCodexHome == null || configuredHomeIsManaged;
-  const effectiveHome = configuredCodexHome ?? resolveManagedCodexHomeDir(env, input.companyId);
+  const effectiveHome = configuredCodexHome ?? (
+    input.companyId && input.agentId
+      ? resolveManagedCodexAgentHomeDir(env, input.companyId, input.agentId)
+      : resolveManagedCodexHomeDir(env, input.companyId)
+  );
 
   if (!effectiveHomeIsManaged) {
     // Genuine external override: Paperclip never seeds or inspects it.

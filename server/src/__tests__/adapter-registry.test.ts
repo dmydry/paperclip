@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ServerAdapterModule } from "../adapters/index.js";
+import { resolveManagedCodexAgentHomeDir } from "@paperclipai/adapter-codex-local/server";
 
 import {
   detectAdapterModel,
@@ -44,6 +45,7 @@ const fs = require("node:fs");
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
 const payload = {
   codexHome: process.env.CODEX_HOME || null,
+  codexSqliteHome: process.env.CODEX_SQLITE_HOME || null,
   openAiApiKey: Object.prototype.hasOwnProperty.call(process.env, "OPENAI_API_KEY")
     ? process.env.OPENAI_API_KEY
     : null,
@@ -340,6 +342,8 @@ describe("server adapter registry", () => {
 
     const previousSubscription2Home = process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME;
     const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
 
     try {
       await fs.mkdir(workspace, { recursive: true });
@@ -360,6 +364,8 @@ describe("server adapter registry", () => {
 
       process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME = subscription2Home;
       process.env.OPENAI_API_KEY = "sk-host-should-not-leak";
+      process.env.PAPERCLIP_HOME = path.join(root, "paperclip-home");
+      process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
 
       const adapter = findActiveServerAdapter("codex_subscription_2_local");
       expect(adapter).not.toBeNull();
@@ -398,15 +404,29 @@ describe("server adapter registry", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         codexHome: string | null;
+        codexSqliteHome: string | null;
         openAiApiKey: string | null;
       };
-      expect(capture.codexHome).toBe(subscription2Home);
+      const expectedRuntimeHome = resolveManagedCodexAgentHomeDir(
+        process.env,
+        "company-1",
+        "agent-subscription-2",
+      );
+      expect(capture.codexHome).toBe(expectedRuntimeHome);
+      expect(capture.codexSqliteHome).toBe(expectedRuntimeHome);
       expect(capture.openAiApiKey).toBe("");
+      expect(await fs.realpath(path.join(expectedRuntimeHome, "auth.json"))).toBe(
+        await fs.realpath(path.join(subscription2Home, "auth.json")),
+      );
     } finally {
       if (previousSubscription2Home === undefined) delete process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME;
       else process.env.PAPERCLIP_CODEX_SUBSCRIPTION_2_HOME = previousSubscription2Home;
       if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

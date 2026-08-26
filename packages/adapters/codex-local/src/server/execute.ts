@@ -47,7 +47,6 @@ import {
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
-  resolvePaperclipInstanceRootForAdapter,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
   parseLocalProcessFilesystemScope,
@@ -70,11 +69,12 @@ import {
   evaluateCodexCredentialReadiness,
   isManagedCodexHomePath,
   pathExists,
-  prepareManagedCodexHome,
-  resolveManagedCodexHomeDir,
+  resolveCodexAuthSourceHomeDir,
+  resolveManagedCodexAgentHomeDir,
   resolveSharedCodexHomeDir,
   seedManagedCodexHome,
   stageCodexHomeForSync,
+  withCodexAuthSourceHome,
   mergeManagedCodexMcpGateways,
   writeManagedCodexMcpConfig,
   type ManagedCodexMcpGateway,
@@ -118,33 +118,6 @@ const TOKEN_DISCIPLINE_INSTRUCTIONS = `Token discipline rules (required):
 - When reading Paperclip issue comments, avoid dumping the full thread unless the task truly requires it; prefer latest relevant comments, concise summaries, and only the fields needed for the decision.
 - When checking production pages, prefer selector counts, extracted attributes, HTTP status, or short matched snippets. Do not print full HTML.
 - If a command may produce a large output, redirect it to an artifact file first, then print a short summary plus the file path.`;
-
-function resolveCodexLocalAgentHome(
-  env: NodeJS.ProcessEnv,
-  companyId: string,
-  agentId: string,
-): string {
-  const instanceRoot = resolvePaperclipInstanceRootForAdapter({
-    homeDir:
-      typeof env.PAPERCLIP_HOME === "string" && env.PAPERCLIP_HOME.trim().length > 0
-        ? env.PAPERCLIP_HOME.trim()
-        : undefined,
-    instanceId:
-      typeof env.PAPERCLIP_INSTANCE_ID === "string" && env.PAPERCLIP_INSTANCE_ID.trim().length > 0
-        ? env.PAPERCLIP_INSTANCE_ID.trim()
-        : undefined,
-    env,
-  });
-  return path.resolve(instanceRoot, "companies", companyId, "agents", agentId, "codex-home");
-}
-
-function isPaperclipManagedAgentCodexHome(
-  configuredHome: string | null,
-  agent: { companyId: string; id: string },
-): configuredHome is string {
-  if (!configuredHome) return false;
-  return path.resolve(configuredHome) === resolveCodexLocalAgentHome(process.env, agent.companyId, agent.id);
-}
 
 function stripCodexRolloutNoise(text: string): string {
   const parts = text.split(/\r?\n/);
@@ -412,7 +385,9 @@ async function sandboxCodexAuthJsonExists(input: {
 export async function assertCodexCredentialsLaunchable(input: {
   runId: string;
   companyId: string;
+  agentId?: string;
   configuredCodexHome: string | null;
+  authSourceCodexHome?: string | null;
   configuredApiKey: string | null;
   effectiveCodexHome: string;
   target: MaybeResolvedExecutionTarget;
@@ -423,7 +398,9 @@ export async function assertCodexCredentialsLaunchable(input: {
   const credentialReadiness = await evaluateCodexCredentialReadiness({
     env: input.env ?? process.env,
     companyId: input.companyId,
+    agentId: input.agentId,
     configuredCodexHome: input.configuredCodexHome,
+    authSourceCodexHome: input.authSourceCodexHome,
     configuredApiKey: input.configuredApiKey,
   });
   if (!credentialReadiness.managed || credentialReadiness.ready) return;
@@ -665,11 +642,32 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   const envConfig = parseObject(config.env);
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
-  const configuredCodexHome =
+  const requestedCodexHome =
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
-  const configuredCodexHomeIsManaged = isPaperclipManagedAgentCodexHome(configuredCodexHome, agent);
+  const authSourceCodexHome =
+    typeof config.codexAuthSourceHome === "string" && config.codexAuthSourceHome.trim().length > 0
+      ? path.resolve(config.codexAuthSourceHome.trim())
+      : null;
+  const authSourceEnv = withCodexAuthSourceHome(process.env, authSourceCodexHome);
+  const resolvedAuthSourceCodexHome = resolveCodexAuthSourceHomeDir(authSourceCodexHome, process.env);
+  const defaultCodexHome = resolveManagedCodexAgentHomeDir(process.env, agent.companyId, agent.id);
+  const requestedHomeIsManaged =
+    requestedCodexHome != null &&
+    isManagedCodexHomePath(process.env, agent.companyId, requestedCodexHome);
+  const requestedHomeIsShared = requestedCodexHome != null && (
+    requestedCodexHome === resolvedAuthSourceCodexHome ||
+    requestedCodexHome === resolveSharedCodexHomeDir({})
+  );
+  // Existing agents may still carry the legacy shared company/subscription
+  // home. Normalize every Paperclip-managed or auth-source path onto the
+  // canonical per-agent runtime home before touching skills or state.
+  const configuredCodexHome = requestedHomeIsManaged || requestedHomeIsShared
+    ? defaultCodexHome
+    : requestedCodexHome;
+  const configuredCodexHomeIsManaged =
+    configuredCodexHome != null && configuredCodexHome === defaultCodexHome;
   const codexSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = resolveCodexDesiredSkillNames(config, codexSkillEntries);
   if (!executionTargetIsRemote) {
@@ -684,9 +682,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // seeded — it ships with no credentials and OPENAI_API_KEY="" by default.
   // Only a genuine external/user-supplied override is treated as self-managed
   // and left untouched.
-  const configuredHomeIsManaged =
-    configuredCodexHome != null &&
-    isManagedCodexHomePath(process.env, agent.companyId, configuredCodexHome);
   // Identity-anchored cache vend (host to sandbox). Before the managed home is
   // seeded from the shared source `auth.json`, refresh the shared credential with
   // a strictly-newer cached copy of the SAME identity. The vend reads the host
@@ -695,7 +690,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // additive: the managed home still symlinks the shared `auth.json`, now at its
   // freshest same-identity copy. The off-switch (default on) skips the vend.
   if (isCodexAuthCacheEnabled(process.env)) {
-    const sharedHomeAuthPath = path.join(resolveSharedCodexHomeDir(process.env), "auth.json");
+    const sharedHomeAuthPath = path.join(resolvedAuthSourceCodexHome, "auth.json");
     await selectVendCredential(
       sharedHomeAuthPath,
       (accountId) => resolveCodexAuthCacheEntryPath(process.env, accountId, agent.companyId),
@@ -710,16 +705,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       void error;
     });
   }
-  if (configuredCodexHome == null) {
-    await prepareManagedCodexHome(process.env, onLog, agent.companyId, {
-      apiKey: configuredOpenAiApiKey,
-    });
-  } else if (configuredHomeIsManaged) {
-    await seedManagedCodexHome(configuredCodexHome, process.env, onLog, {
+  if (configuredCodexHome == null || configuredCodexHomeIsManaged) {
+    await seedManagedCodexHome(defaultCodexHome, authSourceEnv, onLog, {
       apiKey: configuredOpenAiApiKey,
     });
   }
-  const defaultCodexHome = resolveManagedCodexHomeDir(process.env, agent.companyId);
   const effectiveCodexHome = configuredCodexHome ?? defaultCodexHome;
   await fs.mkdir(effectiveCodexHome, { recursive: true });
 
@@ -736,7 +726,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   await assertCodexCredentialsLaunchable({
     runId,
     companyId: agent.companyId,
+    agentId: agent.id,
     configuredCodexHome,
+    authSourceCodexHome,
     configuredApiKey: configuredOpenAiApiKey,
     effectiveCodexHome,
     target: executionTarget,
@@ -861,7 +853,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
                 restore: async ({ assetDir, readFile }) =>
                   void (await copyBackCodexAuth({
                     readSandboxAuth: () => readFile(path.posix.join(assetDir, "auth.json")),
-                    hostAuthPath: path.join(resolveSharedCodexHomeDir(process.env), "auth.json"),
+                    hostAuthPath: path.join(resolvedAuthSourceCodexHome, "auth.json"),
                     log: (line) => onLog("stdout", `${line}\n`),
                     // Additive cache write (sandbox to host): also cache the
                     // sandbox subscription credential in its per-identity slot,
@@ -984,6 +976,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
     }
     env.CODEX_HOME = remoteCodexHome ?? effectiveCodexHome;
+    env.CODEX_SQLITE_HOME = env.CODEX_HOME;
     if (authToken) {
       env.PAPERCLIP_API_KEY = authToken;
     }

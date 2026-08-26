@@ -812,17 +812,39 @@ describe("evaluateCodexCredentialReadiness", () => {
     }
   });
 
-  it("defaults to the managed company home when no CODEX_HOME is configured", async () => {
+  it("defaults to the managed per-agent home when no CODEX_HOME is configured", async () => {
     const fx = await makeFixture();
     try {
       const result = await evaluateCodexCredentialReadiness({
         env: fx.env,
         companyId: "company-1",
+        agentId: "agent-1",
         configuredCodexHome: null,
         configuredApiKey: "",
       });
       expect(result).toMatchObject({ managed: true, authMode: "subscription", ready: false });
-      expect(result.effectiveHome).toBe(path.resolve(fx.managedCompanyHome));
+      expect(result.effectiveHome).toBe(path.resolve(fx.managedAgentHome));
+    } finally {
+      await fs.rm(fx.root, { recursive: true, force: true });
+    }
+  });
+
+  it("checks a dedicated subscription auth source without using it as runtime home", async () => {
+    const fx = await makeFixture();
+    try {
+      const subscriptionHome = path.join(fx.root, "subscription-2");
+      await writeUsableAuth(subscriptionHome);
+      const result = await evaluateCodexCredentialReadiness({
+        env: fx.env,
+        companyId: "company-1",
+        agentId: "agent-1",
+        configuredCodexHome: null,
+        authSourceCodexHome: subscriptionHome,
+        configuredApiKey: "",
+      });
+      expect(result).toMatchObject({ managed: true, authMode: "subscription", ready: true });
+      expect(result.effectiveHome).toBe(path.resolve(fx.managedAgentHome));
+      expect(result.sharedSourceHome).toBe(path.resolve(subscriptionHome));
     } finally {
       await fs.rm(fx.root, { recursive: true, force: true });
     }

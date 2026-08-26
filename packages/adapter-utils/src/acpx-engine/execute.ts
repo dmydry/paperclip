@@ -603,8 +603,23 @@ function defaultStateDir(companyId: string, agentId: string): string {
   return path.join(defaultPaperclipInstanceDir(), "companies", companyId, "acp-engine", "agents", agentId);
 }
 
-function resolveManagedCodexHomeDir(companyId: string): string {
-  return path.join(defaultPaperclipInstanceDir(), "companies", companyId, "codex-home");
+function resolveManagedCodexAgentHomeDir(companyId: string, agentId: string): string {
+  return path.join(
+    defaultPaperclipInstanceDir(),
+    "companies",
+    companyId,
+    "agents",
+    agentId,
+    "codex-home",
+  );
+}
+
+function isPaperclipManagedCodexHome(companyId: string, homePath: string): boolean {
+  const instanceRoot = defaultPaperclipInstanceDir();
+  const companyRoot = path.join(instanceRoot, "companies", companyId);
+  const legacyInstanceHome = path.join(instanceRoot, "codex-home");
+  const resolved = path.resolve(homePath);
+  return resolved === legacyInstanceHome || resolved === companyRoot || resolved.startsWith(companyRoot + path.sep);
 }
 
 // Walk up from startDir looking for `node_modules/.bin/<binName>`. This matches
@@ -1011,6 +1026,7 @@ async function reconcileManagedCodexSkills(input: {
 
 async function prepareCodexSkillRuntime(input: {
   companyId: string;
+  agentId: string;
   config: Record<string, unknown>;
   env: Record<string, string>;
   moduleDir: string;
@@ -1035,12 +1051,21 @@ async function prepareCodexSkillRuntime(input: {
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
   const sourceCodexHome =
-    typeof process.env.CODEX_HOME === "string" && process.env.CODEX_HOME.trim().length > 0
+    typeof input.config.codexAuthSourceHome === "string" && input.config.codexAuthSourceHome.trim().length > 0
+      ? path.resolve(input.config.codexAuthSourceHome.trim())
+      : typeof process.env.CODEX_HOME === "string" && process.env.CODEX_HOME.trim().length > 0
       ? path.resolve(process.env.CODEX_HOME.trim())
       : path.join(os.homedir(), ".codex");
-  const managedCodexHome = resolveManagedCodexHomeDir(input.companyId);
-  const effectiveCodexHome = configuredCodexHome ??
-    await prepareManagedCodexHome({
+  const managedCodexHome = resolveManagedCodexAgentHomeDir(input.companyId, input.agentId);
+  const configuredHomeIsManaged =
+    configuredCodexHome != null && isPaperclipManagedCodexHome(input.companyId, configuredCodexHome);
+  const configuredHomeIsShared = configuredCodexHome != null && (
+    configuredCodexHome === sourceCodexHome ||
+    configuredCodexHome === path.join(os.homedir(), ".codex")
+  );
+  const effectiveCodexHome = configuredCodexHome && !configuredHomeIsManaged && !configuredHomeIsShared
+    ? configuredCodexHome
+    : await prepareManagedCodexHome({
       companyId: input.companyId,
       sourceHome: sourceCodexHome,
       targetHome: managedCodexHome,
@@ -1090,6 +1115,7 @@ async function prepareCodexSkillRuntime(input: {
   await writeManagedCodexSkillsManifest(skillsHome, selectedSkills.map((entry) => entry.runtimeName));
 
   input.env.CODEX_HOME = effectiveCodexHome;
+  input.env.CODEX_SQLITE_HOME = effectiveCodexHome;
 
   return {
     identity: {
@@ -1764,6 +1790,7 @@ async function buildRuntime(input: {
     const preparedSkills = await measureStartupStep(input.ctx, nowMs, "codex-home.seed", () =>
       prepareCodexSkillRuntime({
         companyId: agent.companyId,
+        agentId: agent.id,
         config,
         env,
         moduleDir: input.engine.moduleDir,

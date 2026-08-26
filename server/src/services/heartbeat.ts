@@ -284,6 +284,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import { extractSkillMentionIds, isUuidLike } from "@paperclipai/shared";
 import { evaluateCodexCredentialReadiness } from "@paperclipai/adapter-codex-local/server";
+import { resolveCodexSubscription2Home } from "../adapters/codex-subscription-home.js";
 import { environmentService } from "./environments.js";
 import { parseExecutionPolicyBootstrapEnv } from "./execution-policy-bootstrap.js";
 import { environmentRuntimeService } from "./environment-runtime.js";
@@ -1192,12 +1193,20 @@ export async function resolveExecutionRunAdapterConfig(input: {
   // adapter can probe once the sandbox is up — and on managed cloud hosts a
   // host-side login never exists at all. The adapter's execute-time gate
   // remains the authority there; it probes the sandbox before failing.
-  if ((input.adapterType ?? null) === "codex_local" && (input.environmentDriver ?? null) !== "sandbox") {
+  const codexAdapterType = input.adapterType ?? null;
+  if (
+    (codexAdapterType === "codex_local" || codexAdapterType === "codex_subscription_2_local") &&
+    (input.environmentDriver ?? null) !== "sandbox"
+  ) {
     const resolvedEnv = parseObject(resolvedConfig.env);
     const readiness = await evaluateCodexCredentialReadiness({
       env: process.env,
       companyId: input.companyId,
+      agentId: input.agentId ?? undefined,
       configuredCodexHome: readNonEmptyString(resolvedEnv.CODEX_HOME),
+      authSourceCodexHome: codexAdapterType === "codex_subscription_2_local"
+        ? resolveCodexSubscription2Home(process.env)
+        : null,
       configuredApiKey: readNonEmptyString(resolvedEnv.OPENAI_API_KEY),
     });
     if (readiness.managed && !readiness.ready) {
@@ -1213,7 +1222,7 @@ export async function resolveExecutionRunAdapterConfig(input: {
             projectId: input.projectId ?? null,
             routineId: input.routineId ?? null,
             responsibleUserId: input.responsibleUserId ?? null,
-            adapterType: "codex_local",
+            adapterType: codexAdapterType,
             requiredEnvKeys: ["OPENAI_API_KEY"],
             effectiveCodexHome: readiness.effectiveHome,
             missingBindings: [],

@@ -41,7 +41,7 @@ import { copyBackCodexAuth } from "./codex-auth-copyback.js";
 import { buildCodexAuthInboundProvision } from "./codex-auth-merge-scripts.js";
 import {
   evaluateCodexCredentialReadiness,
-  resolveSharedCodexHomeDir,
+  resolveCodexAuthSourceHomeDir,
   stageCodexHomeForSync,
 } from "./codex-home.js";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "./auth-check.js";
@@ -187,6 +187,10 @@ async function prepareCodexRemoteManagedHome(
   input: AcpxRemoteManagedHomeContext,
 ): Promise<AcpxRemoteManagedHomeResult> {
   const { env, runId, onLog } = input;
+  const authSourceCodexHome = resolveCodexAuthSourceHomeDir(
+    input.config.codexAuthSourceHome,
+    process.env,
+  );
   // The host managed Codex home the engine seeded and set on env.CODEX_HOME.
   const effectiveCodexHome = env.CODEX_HOME;
   if (!effectiveCodexHome) {
@@ -213,7 +217,7 @@ async function prepareCodexRemoteManagedHome(
         restore: async ({ assetDir, readFile }) =>
           void (await copyBackCodexAuth({
             readSandboxAuth: () => readFile(path.posix.join(assetDir, "auth.json")),
-            hostAuthPath: path.join(resolveSharedCodexHomeDir(process.env), "auth.json"),
+            hostAuthPath: path.join(authSourceCodexHome, "auth.json"),
             log: (line) => onLog("stdout", `${line}\n`),
           })),
       },
@@ -226,6 +230,7 @@ async function prepareCodexRemoteManagedHome(
   env.CODEX_HOME =
     stagedRuntime.assetDirs.home ??
     path.posix.join(stagedRuntime.runtimeRootDir ?? "", "home");
+  env.CODEX_SQLITE_HOME = env.CODEX_HOME;
 
   return {
     stagedRuntime,
@@ -577,6 +582,9 @@ export async function testCodexAcpEnvironment(
       env: process.env,
       companyId: ctx.companyId,
       configuredCodexHome,
+      authSourceCodexHome: isNonEmpty(config.codexAuthSourceHome)
+        ? config.codexAuthSourceHome
+        : null,
       configuredApiKey,
     });
 
@@ -619,6 +627,9 @@ export async function testCodexAcpEnvironment(
       env: process.env,
       companyId: ctx.companyId,
       configuredCodexHome,
+      authSourceCodexHome: isNonEmpty(config.codexAuthSourceHome)
+        ? config.codexAuthSourceHome
+        : null,
       configuredApiKey: configApiKey,
     });
     if (!credentialReadiness.ready) {

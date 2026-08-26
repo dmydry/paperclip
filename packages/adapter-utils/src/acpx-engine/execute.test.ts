@@ -163,6 +163,8 @@ async function runExecutor(
     runtimeMcp?: AdapterRuntimeMcpAccess;
     prepareRemoteManagedHome?: AcpxEngineExecutorOptions["prepareRemoteManagedHome"];
     startupTraceContext?: AdapterExecutionContext["startupTraceContext"];
+    agentId?: string;
+    companyId?: string;
   } = {},
 ) {
   const runtimeOptions: Record<string, unknown>[] = [];
@@ -187,8 +189,8 @@ async function runExecutor(
   const result = await execute({
     runId: "run-1",
     agent: {
-      id: "agent-1",
-      companyId: "company-1",
+      id: options.agentId ?? "agent-1",
+      companyId: options.companyId ?? "company-1",
     },
       runtime: {},
       config,
@@ -1180,6 +1182,104 @@ describe("shared ACPX engine runtime behavior", () => {
     expect(await pathExists(path.join(codexHome, "skills", remove.runtimeName))).toBe(false);
   });
 
+  it.skipIf(process.platform === "win32")("isolates concurrent ACPX Codex skill reconciliation per agent", async () => {
+    const root = await makeTempRoot();
+    const skillRoot = path.join(root, "skills");
+    const alpha = await createSkill(skillRoot, "alpha");
+    const beta = await createSkill(skillRoot, "beta");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
+
+    try {
+      process.env.PAPERCLIP_HOME = paperclipHome;
+      process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+      const baseConfig = {
+        agent: "codex",
+        paperclipRuntimeSkills: [alpha, beta],
+      };
+
+      const [alphaRun, betaRun] = await Promise.all([
+        runExecutor(
+          { ...baseConfig, stateDir: path.join(root, "state-alpha"), paperclipSkillSync: { desiredSkills: [alpha.key] } },
+          { agentId: "agent-alpha" },
+        ),
+        runExecutor(
+          { ...baseConfig, stateDir: path.join(root, "state-beta"), paperclipSkillSync: { desiredSkills: [beta.key] } },
+          { agentId: "agent-beta" },
+        ),
+      ]);
+
+      const companyRoot = path.join(
+        paperclipHome,
+        "instances",
+        "test-instance",
+        "companies",
+        "company-1",
+        "agents",
+      );
+      const alphaHome = path.join(companyRoot, "agent-alpha", "codex-home");
+      const betaHome = path.join(companyRoot, "agent-beta", "codex-home");
+      expect(await pathExists(path.join(alphaHome, "skills", alpha.runtimeName, "SKILL.md"))).toBe(true);
+      expect(await pathExists(path.join(alphaHome, "skills", beta.runtimeName))).toBe(false);
+      expect(await pathExists(path.join(betaHome, "skills", beta.runtimeName, "SKILL.md"))).toBe(true);
+      expect(await pathExists(path.join(betaHome, "skills", alpha.runtimeName))).toBe(false);
+      expect((alphaRun.meta[0]?.env as Record<string, string>).CODEX_HOME).toBe(alphaHome);
+      expect((alphaRun.meta[0]?.env as Record<string, string>).CODEX_SQLITE_HOME).toBe(alphaHome);
+      expect((betaRun.meta[0]?.env as Record<string, string>).CODEX_HOME).toBe(betaHome);
+      expect((betaRun.meta[0]?.env as Record<string, string>).CODEX_SQLITE_HOME).toBe(betaHome);
+    } finally {
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("migrates a legacy instance-shared ACPX Codex home to the per-agent runtime home", async () => {
+    const root = await makeTempRoot();
+    const paperclipHome = path.join(root, "paperclip-home");
+    const instanceRoot = path.join(paperclipHome, "instances", "test-instance");
+    const legacyHome = path.join(instanceRoot, "codex-home");
+    const sourceCodexHome = path.join(root, "source-codex-home");
+    const skillRoot = path.join(root, "skills");
+    const skill = await createSkill(skillRoot, "isolated");
+    await fs.mkdir(sourceCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sourceCodexHome, "auth.json"), "{\"source\":true}", "utf8");
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
+
+    try {
+      process.env.PAPERCLIP_HOME = paperclipHome;
+      process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+      const result = await runExecutor({
+        agent: "codex",
+        stateDir: path.join(root, "state"),
+        codexAuthSourceHome: sourceCodexHome,
+        env: { CODEX_HOME: legacyHome },
+        paperclipRuntimeSkills: [skill],
+        paperclipSkillSync: { desiredSkills: [skill.key] },
+      });
+
+      const expectedHome = path.join(
+        instanceRoot,
+        "companies",
+        "company-1",
+        "agents",
+        "agent-1",
+        "codex-home",
+      );
+      expect((result.meta[0]?.env as Record<string, string>).CODEX_HOME).toBe(expectedHome);
+      expect(await pathExists(path.join(expectedHome, "skills", skill.runtimeName, "SKILL.md"))).toBe(true);
+      expect(await pathExists(path.join(legacyHome, "skills", skill.runtimeName))).toBe(false);
+    } finally {
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
+    }
+  });
+
   it.skipIf(process.platform === "win32")("removes legacy ACPX Codex skill symlinks when a skill is no longer desired", async () => {
     const root = await makeTempRoot();
     const skillRoot = path.join(root, "skills");
@@ -1211,6 +1311,8 @@ describe("shared ACPX engine runtime behavior", () => {
       paperclipInstanceId,
       "companies",
       "company-1",
+      "agents",
+      "agent-1",
       "codex-home",
     );
     await fs.mkdir(sourceCodexHome, { recursive: true });

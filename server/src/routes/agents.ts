@@ -80,6 +80,7 @@ import type {
   AdapterModelProfileDefinition,
 } from "@paperclipai/adapter-utils";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
+import { resolveCodexSubscription2Home } from "../adapters/codex-subscription-home.js";
 import { skillVersionSelectionMap } from "../services/runtime-skill-selections.js";
 import { secretService } from "../services/secrets.js";
 import { authorizationDeniedDetails } from "../services/authorization.js";
@@ -1822,8 +1823,10 @@ export function agentRoutes(
     });
     const normalizedHome = normalizeCodexLocalHomePath(configuredHome);
     const sharedHomes = [
+      path.resolve(instanceRoot, "codex-home"),
       path.resolve(instanceRoot, "companies", companyId, "codex-home"),
       path.resolve(path.join(os.homedir(), ".codex")),
+      resolveCodexSubscription2Home(process.env),
     ];
     const hostCodexHome = asNonEmptyString(process.env.CODEX_HOME);
     if (hostCodexHome) {
@@ -1831,7 +1834,7 @@ export function agentRoutes(
     }
     if (!sharedHomes.some((sharedHome) => sharedHome === normalizedHome)) return;
     throw unprocessable(
-      "codex_local agents with OPENAI_API_KEY must use an isolated adapterConfig.env.CODEX_HOME; shared company codex-home or host Codex auth home is not allowed",
+      "Codex agents must use an isolated adapterConfig.env.CODEX_HOME; shared company or subscription auth homes are not allowed as runtime homes",
     );
   }
 
@@ -1841,12 +1844,10 @@ export function agentRoutes(
     return record?.type === "secret_ref" && typeof record.secretId === "string";
   }
 
-  // codex_local agents may use subscription auth from a managed/shared
-  // CODEX_HOME, but should not inherit a host OPENAI_API_KEY from the service
-  // environment. A blank OPENAI_API_KEY keeps API-key auth fail-closed while
-  // preserving Codex auth.json subscription login. Per-agent API keys still get
-  // an isolated CODEX_HOME so their api-key auth.json cannot collide with a
-  // shared subscription home.
+  // Both Codex adapters keep credentials in a shared auth source but execute in
+  // a per-agent runtime home. This prevents concurrent skill reconciliation and
+  // Codex state writes from mutating another agent's runtime. A blank
+  // OPENAI_API_KEY also keeps subscription agents from inheriting a host API key.
   function applyCodexLocalKeyIsolation(
     companyId: string,
     agentId: string,
@@ -1858,12 +1859,6 @@ export function agentRoutes(
     const nextEnv: Record<string, unknown> = { ...existingEnv };
     if (!codexLocalEnvKeyConfigured(nextEnv.OPENAI_API_KEY)) {
       nextEnv.OPENAI_API_KEY = "";
-    }
-    if (adapterType === "codex_subscription_2_local") {
-      return { ...adapterConfig, env: nextEnv };
-    }
-    if (!codexLocalEnvKeyConfigured(existingEnv.OPENAI_API_KEY)) {
-      return { ...adapterConfig, env: nextEnv };
     }
     const configuredHome = asEnvBindingString(existingEnv.CODEX_HOME);
     if (configuredHome) {
