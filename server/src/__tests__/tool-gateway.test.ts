@@ -209,7 +209,10 @@ async function createRemoteMcpTool(
     status: input.connectionStatus ?? "active",
     enabled: input.connectionEnabled ?? true,
     healthStatus: input.healthStatus ?? "ok",
-    config: { url: input.url ?? "https://mcp.example.test/mcp" },
+    config: {
+      url: input.url ?? "https://mcp.example.test/mcp",
+      ...(input.connectionConfig ?? {}),
+    },
     transportConfig: { url: input.url ?? "https://mcp.example.test/mcp" },
     credentialRefs: input.credentialRefs ?? [],
     credentialSecretRefs: input.credentialSecretRefs ?? [],
@@ -2402,6 +2405,73 @@ rl.on("line", (line) => {
       expect(persisted).toContain("mcp_remote_http");
       expect(persisted).toContain("approval-app");
       expect(persisted).toContain("kv_set");
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("uses the connection approved execution timeout for an approved remote MCP call", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const configuredTimeoutMs = 3_700_000;
+    const fake = await startFakeRemoteMcpServer((fakeRequest) => ({
+      delayMs: 75,
+      body: {
+        jsonrpc: "2.0",
+        id: fakeRequest.body?.id,
+        result: { content: [{ type: "text", text: "approved after deploy-sized wait" }] },
+      },
+    }));
+
+    try {
+      const remoteTool = await createRemoteMcpTool(db, company.id, {
+        applicationKey: "long-approved-action-app",
+        toolName: "release_frontend",
+        url: fake.url,
+        connectionConfig: { approvedExecutionTimeoutMs: configuredTimeoutMs },
+      });
+      const remoteToolName = expectedConnectedToolName({
+        applicationKey: remoteTool.application.applicationKey,
+        connectionId: remoteTool.connection.id,
+        toolName: remoteTool.catalogEntry.toolName,
+      });
+      await allowToolsForAgent(db, company.id, agent.id, [remoteToolName]);
+      await db.insert(toolPolicies).values({
+        companyId: company.id,
+        name: "Review long approved action",
+        policyType: "require_approval",
+        selectors: { connectionId: remoteTool.connection.id },
+        priority: 10,
+      });
+
+      const gateway = createTestToolGatewayService(db);
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      await gateway.executeTool({
+        sessionToken: session.token,
+        tool: remoteToolName,
+        parameters: { key: "release", value: "exact-sha" },
+      }).then(
+        () => {
+          throw new Error("Expected remote MCP call to require approval");
+        },
+        (error) => expectGatewayError(error, 409, "approval_required"),
+      );
+
+      const [actionRequest] = await db.select().from(toolActionRequests);
+      const resolution = await gateway.approveActionRequest({
+        companyId: company.id,
+        actionRequestId: actionRequest.id,
+        actor: { userId: "board-user" },
+      });
+
+      expect(resolution).toMatchObject({ status: "executed" });
+      expect(fake.requests).toHaveLength(1);
+      const completedEvent = (await db.select().from(toolCallEvents))
+        .find((event) => event.actionRequestId === actionRequest.id && event.eventType === "call_completed");
+      expect(completedEvent?.metadata).toMatchObject({
+        timeoutMs: configuredTimeoutMs,
+      });
     } finally {
       await fake.close();
     }

@@ -78,13 +78,17 @@ import {
 const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSION_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
+const DEFAULT_APPROVED_EXECUTION_TIMEOUT_MS = 60_000;
+const MAX_APPROVED_EXECUTION_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 // When a human approves a parked write, the server carries it out on their
 // behalf with no interactive caller left to raise `timeoutMs`. Remote write
 // providers (e.g. Zapier Google Sheets `add_row`) routinely take longer than
 // the 10s interactive default, so an approved action would otherwise abort with
-// `tool_timeout` even though the approval succeeded. Give approved executions
-// the full permitted headroom instead.
-const APPROVED_EXECUTION_TIMEOUT_MS = 60_000;
+// `tool_timeout` even though the approval succeeded. Keep the generic default
+// conservative, while allowing a connection to declare the bounded execution
+// window its provider actually needs (for example, a production deploy broker).
+// This setting applies only after approval; interactive calls keep their 60s
+// maximum below.
 // The gateway creates an ask-first request in two steps: it inserts the row
 // with a null signature, then it signs the row and sets the expiry. A concurrent
 // matching call can observe the row in this window. A null signature alone does
@@ -449,6 +453,17 @@ function gatewaySessionFromRow(row: typeof toolGatewaySessions.$inferSelect): To
 function timeoutMs(value: number | undefined) {
   if (!Number.isFinite(value)) return DEFAULT_TOOL_TIMEOUT_MS;
   return Math.max(1, Math.min(60_000, Math.floor(value ?? DEFAULT_TOOL_TIMEOUT_MS)));
+}
+
+function approvedExecutionTimeoutMs(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_APPROVED_EXECUTION_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.min(MAX_APPROVED_EXECUTION_TIMEOUT_MS, Math.floor(value)));
+}
+
+function approvedExecutionTimeoutMsFromConnectionConfig(value: unknown) {
+  return approvedExecutionTimeoutMs(asRecord(value)?.approvedExecutionTimeoutMs);
 }
 
 function sessionTtlMs(value: number | undefined) {
@@ -2766,13 +2781,16 @@ export function createToolGatewayService(
     }
   }
 
-  async function connectedRemoteApprovalSnapshot(
+  async function connectedRemoteApprovalContext(
     session: ToolGatewaySession,
     tool: ToolGatewayDescriptor,
     options: { requireResolvedCredentials?: boolean } = {},
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<{ snapshot: Record<string, unknown> | null; executionTimeoutMs: number }> {
     if (tool.providerType !== "mcp_remote_http" || !tool.connectionId || !tool.catalogEntryId) {
-      return null;
+      return {
+        snapshot: null,
+        executionTimeoutMs: DEFAULT_APPROVED_EXECUTION_TIMEOUT_MS,
+      };
     }
     const [row] = await db
       .select({
@@ -2791,35 +2809,46 @@ export function createToolGatewayService(
         eq(toolApplications.companyId, session.companyId),
       ))
       .limit(1);
-    if (!row) return null;
+    if (!row) return { snapshot: null, executionTimeoutMs: DEFAULT_APPROVED_EXECUTION_TIMEOUT_MS };
     const credentialVersions = await connectedCredentialVersionSnapshots(row.connection, {
       requireResolved: options.requireResolvedCredentials === true,
     });
     return {
-      applicationId: row.application.id,
-      applicationKey: row.application.applicationKey ?? null,
-      applicationStatus: row.application.status,
-      applicationType: row.application.type,
-      connectionId: row.connection.id,
-      connectionStatus: row.connection.status,
-      connectionEnabled: row.connection.enabled,
-      connectionTransport: row.connection.transport,
-      connectionConfigHash: stableHash(row.connection.config ?? {}),
-      connectionTransportConfigHash: stableHash(row.connection.transportConfig ?? {}),
-      credentialRefsHash: stableHash(row.connection.credentialRefs ?? []),
-      credentialSecretRefsHash: stableHash(row.connection.credentialSecretRefs ?? []),
-      headerCredentialVersions: credentialVersions.headerCredentialVersions,
-      credentialSecretVersions: credentialVersions.credentialSecretVersions,
-      catalogEntryId: row.entry.id,
-      catalogStatus: row.entry.status,
-      catalogEntryKind: row.entry.entryKind,
-      catalogVersionHash: row.entry.versionHash,
-      catalogSchemaHash: row.entry.schemaHash ?? null,
-      upstreamToolName: row.entry.toolName,
-      providerType: tool.providerType,
-      gatewayToolName: tool.name,
-      riskLevel: tool.risk,
+      snapshot: {
+        applicationId: row.application.id,
+        applicationKey: row.application.applicationKey ?? null,
+        applicationStatus: row.application.status,
+        applicationType: row.application.type,
+        connectionId: row.connection.id,
+        connectionStatus: row.connection.status,
+        connectionEnabled: row.connection.enabled,
+        connectionTransport: row.connection.transport,
+        connectionConfigHash: stableHash(row.connection.config ?? {}),
+        connectionTransportConfigHash: stableHash(row.connection.transportConfig ?? {}),
+        credentialRefsHash: stableHash(row.connection.credentialRefs ?? []),
+        credentialSecretRefsHash: stableHash(row.connection.credentialSecretRefs ?? []),
+        headerCredentialVersions: credentialVersions.headerCredentialVersions,
+        credentialSecretVersions: credentialVersions.credentialSecretVersions,
+        catalogEntryId: row.entry.id,
+        catalogStatus: row.entry.status,
+        catalogEntryKind: row.entry.entryKind,
+        catalogVersionHash: row.entry.versionHash,
+        catalogSchemaHash: row.entry.schemaHash ?? null,
+        upstreamToolName: row.entry.toolName,
+        providerType: tool.providerType,
+        gatewayToolName: tool.name,
+        riskLevel: tool.risk,
+      },
+      executionTimeoutMs: approvedExecutionTimeoutMsFromConnectionConfig(row.connection.config),
     };
+  }
+
+  async function connectedRemoteApprovalSnapshot(
+    session: ToolGatewaySession,
+    tool: ToolGatewayDescriptor,
+    options: { requireResolvedCredentials?: boolean } = {},
+  ): Promise<Record<string, unknown> | null> {
+    return (await connectedRemoteApprovalContext(session, tool, options)).snapshot;
   }
 
   function responseTooLargeError() {
@@ -4219,15 +4248,15 @@ export function createToolGatewayService(
       expiresAt: new Date(Date.now() + DEFAULT_SESSION_TTL_MS),
     };
     let tool: ToolGatewayDescriptor;
-    let liveApprovalSnapshot: Awaited<ReturnType<typeof connectedRemoteApprovalSnapshot>>;
+    let liveApprovalContext: Awaited<ReturnType<typeof connectedRemoteApprovalContext>>;
     try {
       tool = await findToolForSession(session, invocation.toolName);
-      liveApprovalSnapshot = await connectedRemoteApprovalSnapshot(session, tool);
+      liveApprovalContext = await connectedRemoteApprovalContext(session, tool);
     } catch (error) {
       await markApprovedActionFailed({ actionRequestId: claimed.id, invocationId: invocation.id, error });
       throw error;
     }
-    if (!approvalSnapshotsMatch(signedPayload.approvalSnapshot, liveApprovalSnapshot)) {
+    if (!approvalSnapshotsMatch(signedPayload.approvalSnapshot, liveApprovalContext.snapshot)) {
       const error = new ToolGatewayHttpError(409, "Approved tool action target changed after review", "approved_tool_target_changed");
       await markApprovedActionFailed({ actionRequestId: claimed.id, invocationId: invocation.id, error });
       throw error;
@@ -4276,7 +4305,7 @@ export function createToolGatewayService(
     await reflectToolActionInteractionLifecycle({ actionRequestId: claimed.id, status: "executing" });
 
     try {
-      const executionTimeoutMs = timeoutMs(APPROVED_EXECUTION_TIMEOUT_MS);
+      const executionTimeoutMs = liveApprovalContext.executionTimeoutMs;
       const result = tool.providerType === "mcp_remote_http"
         ? (await executeRemoteHttpTool(session, tool, parameters, executionTimeoutMs, invocation.id)).result
         : tool.providerType === "mcp_local_stdio"
