@@ -108,6 +108,7 @@ export type AuthorizationDecision = {
     | "allow_legacy_agent_creator"
     | "allow_issue_mention_grant"
     | "allow_direct_parent_report"
+    | "allow_direct_child_handoff"
     | "allow_visible_issue_write"
     | "allow_self"
     | "allow_company_agent"
@@ -809,6 +810,11 @@ export function authorizationService(db: Db) {
     }
     if (runIssue.id === input.resource.issueId) return "current_issue";
     if (runIssue.parentId === input.resource.issueId) return "direct_parent";
+    const targetIssue = await loadIssue(input.resource.issueId);
+    if (
+      targetIssue?.companyId === input.companyId
+      && targetIssue.parentId === runIssue.id
+    ) return "direct_child";
     return null;
   }
 
@@ -1871,7 +1877,7 @@ export function authorizationService(db: Db) {
       if (taskBridgeDecision) return taskBridgeDecision;
     }
 
-    let runIssueCommentTarget: "current_issue" | "direct_parent" | null = null;
+    let runIssueCommentTarget: "current_issue" | "direct_parent" | "direct_child" | null = null;
     if (input.action === "issue:comment" && input.actor.runId) {
       runIssueCommentTarget = await resolveRunIssueCommentTarget({
         actor: input.actor,
@@ -1921,7 +1927,7 @@ export function authorizationService(db: Db) {
       return deny({
         action: input.action,
         reason: "deny_missing_grant",
-        explanation: "Run-scoped agents may comment only on the current run issue or its direct parent.",
+        explanation: "Run-scoped agents may comment only on the current run issue, its direct parent, or its direct children.",
       });
     }
 
@@ -1941,10 +1947,16 @@ export function authorizationService(db: Db) {
     ) {
       return allow({
         action: input.action,
-        reason: runIssueCommentTarget === "current_issue" ? "allow_self" : "allow_direct_parent_report",
+        reason: runIssueCommentTarget === "current_issue"
+          ? "allow_self"
+          : runIssueCommentTarget === "direct_parent"
+            ? "allow_direct_parent_report"
+            : "allow_direct_child_handoff",
         explanation: runIssueCommentTarget === "current_issue"
           ? "Allowed because the target is the current run issue."
-          : "Allowed because the target is the current run issue's direct parent under the standard trust preset.",
+          : runIssueCommentTarget === "direct_parent"
+            ? "Allowed because the target is the current run issue's direct parent under the standard trust preset."
+            : "Allowed because the target is a direct child of the current run issue under the standard trust preset.",
       });
     }
 

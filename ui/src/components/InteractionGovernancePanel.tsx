@@ -123,7 +123,11 @@ export function applyGovernanceChange(
   } else {
     entry[field] = value;
   }
-  if (entry.defaultPolicy === undefined && entry.cap === undefined) {
+  if (
+    entry.defaultPolicy === undefined
+    && entry.cap === undefined
+    && entry.agentCreationPolicy === undefined
+  ) {
     delete next[kind];
   } else {
     next[kind] = entry;

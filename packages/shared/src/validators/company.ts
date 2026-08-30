@@ -17,6 +17,7 @@ const attachmentMaxBytesSchema = z
 const interactionResolverKindGovernanceSchema = z.object({
   defaultPolicy: z.enum(ISSUE_THREAD_INTERACTION_RESOLVER_POLICIES).optional(),
   cap: z.enum(ISSUE_THREAD_INTERACTION_RESOLVER_POLICIES).optional(),
+  agentCreationPolicy: z.enum(["allow", "governed_actions_only"]).optional(),
 }).strict();
 
 export const interactionResolverGovernanceSchema = z.object({

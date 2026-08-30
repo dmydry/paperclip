@@ -8,6 +8,7 @@ import type {
 export interface InteractionResolverKindGovernance {
   defaultPolicy?: IssueThreadInteractionResolverPolicy;
   cap?: IssueThreadInteractionResolverPolicy;
+  agentCreationPolicy?: "allow" | "governed_actions_only";
 }
 
 export type InteractionResolverGovernance = Partial<

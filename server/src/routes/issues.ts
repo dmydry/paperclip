@@ -4030,6 +4030,10 @@ export function issueRoutes(
     return decision !== true && decision.reason === "allow_direct_parent_report";
   }
 
+  function isDirectChildHandoffDecision(decision: true | Awaited<ReturnType<typeof decideIssueAccess>>) {
+    return decision !== true && decision.reason === "allow_direct_child_handoff";
+  }
+
   function isDefaultOpenIssueWriteDecision(decision: true | Awaited<ReturnType<typeof decideIssueAccess>>) {
     return decision !== true && decision.reason === "allow_visible_issue_write";
   }
@@ -11201,6 +11205,21 @@ export function issueRoutes(
     const actor = getActorInfo(req);
     const agentSourceRunId = req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
     if (req.actor.type === "agent" && !agentSourceRunId) return;
+    if (req.actor.type === "agent" && req.body.kind === "request_confirmation") {
+      const company = await companiesSvc.getById(issue.companyId);
+      const creationPolicy = company?.interactionResolverGovernance
+        ?.request_confirmation
+        ?.agentCreationPolicy;
+      if (creationPolicy === "governed_actions_only") {
+        throw forbidden(
+          "Agents cannot create free-form confirmation cards for this company. Use issue status and comments for blockers; governed tool actions create their own approval cards.",
+          {
+            code: "agent_request_confirmation_creation_restricted",
+            sanctionedPath: "Record the blocker on the existing issue, or invoke the approved broker/tool so Paperclip creates a signed action card.",
+          },
+        );
+      }
+    }
     if (
       req.body.kind === "request_confirmation"
       && req.body.addresseeAgentId
@@ -12140,6 +12159,7 @@ export function issueRoutes(
     const crossIssueCommentOnlyGrant =
       isClosed &&
       (isDirectParentReportDecision(commentAccessDecision) ||
+        isDirectChildHandoffDecision(commentAccessDecision) ||
         (req.actor.type === "agent" &&
           issue.assigneeAgentId !== null &&
           issue.assigneeAgentId !== req.actor.agentId &&
@@ -12527,6 +12547,9 @@ export function issueRoutes(
         authorizationReason: commentAuthorizationReason,
         ...(isDirectParentReportDecision(commentAccessDecision)
           ? { directParentReportGrant: true }
+          : {}),
+        ...(isDirectChildHandoffDecision(commentAccessDecision)
+          ? { directChildHandoffGrant: true }
           : {}),
         ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),

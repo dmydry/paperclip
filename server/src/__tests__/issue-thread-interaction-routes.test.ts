@@ -64,6 +64,9 @@ const mockAccessDecide = vi.hoisted(() => vi.fn(async (input: { action?: string 
 })));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockCompanyGovernance = vi.hoisted(() => ({
+  value: {} as Record<string, unknown>,
+}));
 const mockReviewTransition = vi.hoisted(() => ({
   value: null as null | { actorType: string; actorId: string; details: Record<string, unknown> },
 }));
@@ -147,7 +150,11 @@ vi.mock("../services/trust-preset-resolver.js", () => ({
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
     companyService: () => ({
-      getById: vi.fn(async () => ({ id: "company-1", attachmentMaxBytes: 10 * 1024 * 1024 })),
+      getById: vi.fn(async () => ({
+        id: "company-1",
+        attachmentMaxBytes: 10 * 1024 * 1024,
+        interactionResolverGovernance: mockCompanyGovernance.value,
+      })),
     }),
     accessService: () => ({
       canUser: vi.fn(async () => true),
@@ -526,6 +533,7 @@ describe.sequential("issue thread interaction routes", () => {
       }),
     }));
     mockReviewTransition.value = null;
+    mockCompanyGovernance.value = {};
     // Default: the authenticated run is already working the issue under test, so
     // resolution is a same-issue write and the cross-issue counter must ignore it.
     mockCrossIssueInfluence.sourceIssueId = ISSUE_ID;
@@ -1880,6 +1888,48 @@ describe.sequential("issue thread interaction routes", () => {
         userId: null,
       },
     );
+  });
+
+  it("rejects agent-authored free-form confirmations when company governance requires governed actions", async () => {
+    mockCompanyGovernance.value = {
+      request_confirmation: { agentCreationPolicy: "governed_actions_only" },
+    };
+    const app = await createApp({
+      type: "agent",
+      agentId: CREATED_AGENT_ID,
+      companyId: "company-1",
+      runId: RUN_1,
+    });
+
+    const res = await request(app)
+      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions")
+      .send({
+        kind: "request_confirmation",
+        payload: { version: 1, prompt: "Confirm a routing workaround?" },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.details).toMatchObject({
+      code: "agent_request_confirmation_creation_restricted",
+    });
+    expect(mockInteractionService.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps board-authored confirmations available under governed-action company policy", async () => {
+    mockCompanyGovernance.value = {
+      request_confirmation: { agentCreationPolicy: "governed_actions_only" },
+    };
+    const app = await createApp();
+
+    const res = await request(app)
+      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions")
+      .send({
+        kind: "request_confirmation",
+        payload: { version: 1, prompt: "Confirm the reviewed board decision?" },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockInteractionService.create).toHaveBeenCalled();
   });
 
   it("allows a different in-scope agent run to respond when policy permits", async () => {

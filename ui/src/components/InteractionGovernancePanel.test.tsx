@@ -227,4 +227,18 @@ describe("applyGovernanceChange", () => {
       request_confirmation: { defaultPolicy: "human_only" },
     });
   });
+
+  it("preserves an agent creation restriction when audience overrides are cleared", () => {
+    const current: InteractionResolverGovernance = {
+      request_confirmation: {
+        defaultPolicy: "human_only",
+        agentCreationPolicy: "governed_actions_only",
+      },
+    };
+    expect(
+      applyGovernanceChange(current, "request_confirmation", "defaultPolicy", GOVERNANCE_UNSET),
+    ).toEqual({
+      request_confirmation: { agentCreationPolicy: "governed_actions_only" },
+    });
+  });
 });

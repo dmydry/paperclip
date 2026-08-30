@@ -146,7 +146,17 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
       .set({ parentId: issue.id, checkoutRunId: run.id })
       .where(eq(issues.id, sourceIssue.id));
 
-    return { company, actorAgent, responsibleUserId, boardUserId, run, issue };
+    const childIssue = await db.insert(issues).values({
+      companyId: company.id,
+      identifier: `${company.issuePrefix}-3`,
+      title: "Direct child handoff",
+      status: "done" as const,
+      priority: "medium" as const,
+      parentId: sourceIssue.id,
+      assigneeAgentId: targetAgent.id,
+    }).returning().then((rows) => rows[0]!);
+
+    return { company, actorAgent, responsibleUserId, boardUserId, run, issue, childIssue };
   }
 
   function agentActor(input: Awaited<ReturnType<typeof seed>>): Express.Request["actor"] {
@@ -248,6 +258,33 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
         details: expect.objectContaining({ authorizationReason: "allow_visible_issue_write" }),
       }),
     ]));
+  }, 30_000);
+
+  it("allows a run-scoped direct-child handoff comment without reopening the child", async () => {
+    const fixture = await seed();
+    const response = await request(await createApp(db, agentActor(fixture)))
+      .post(`/api/issues/${fixture.childIssue.id}/comments`)
+      .send({ body: "Retest-ready at exact head.", reopen: true });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(response.body).toMatchObject({
+      authorAgentId: fixture.actorAgent.id,
+      createdByRunId: fixture.run.id,
+      metadata: { authorizationReason: "allow_direct_child_handoff" },
+    });
+    const storedChild = await db.select({ status: issues.status })
+      .from(issues)
+      .where(eq(issues.id, fixture.childIssue.id))
+      .then((rows) => rows[0]!);
+    expect(storedChild.status).toBe("done");
+
+    const activity = await db.select().from(activityLog)
+      .where(and(
+        eq(activityLog.entityId, fixture.childIssue.id),
+        eq(activityLog.action, "issue.comment_added"),
+      ))
+      .then((rows) => rows[0]);
+    expect(activity?.details).toMatchObject({ directChildHandoffGrant: true });
   }, 30_000);
 
   it("rejects and audits an agent-supplied onBehalfOfUserId", async () => {
