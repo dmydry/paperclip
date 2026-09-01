@@ -1086,6 +1086,62 @@ describe.sequential("issue thread interaction routes", () => {
     );
   });
 
+  it("does not wake the assignee before an accepted tool action reaches a terminal result", async () => {
+    let resolveApproval!: (value: { status: "executed"; resultSummary: string }) => void;
+    const approveToolActionRequest = vi.fn().mockImplementation(() =>
+      new Promise<{ status: "executed"; resultSummary: string }>((resolve) => {
+        resolveApproval = resolve;
+      }));
+    mockInteractionService.acceptInteraction.mockResolvedValueOnce({
+      interaction: {
+        id: "interaction-tool-action-delayed",
+        companyId: "company-1",
+        issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        kind: "request_confirmation",
+        status: "accepted",
+        continuationPolicy: "wake_assignee",
+        payload: {
+          version: 1,
+          prompt: "Approve the delayed action?",
+          toolAction: {
+            version: 1,
+            actionRequestId: "action-request-delayed",
+            toolName: "release_backend",
+          },
+        },
+        result: { version: 1, outcome: "accepted" },
+      },
+      createdIssues: [],
+    });
+    const app = await createApp(undefined, { approveToolActionRequest });
+
+    const responsePromise = request(app)
+      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-tool-action-delayed/accept")
+      .send({})
+      .then((response) => response);
+
+    await vi.waitFor(() => expect(approveToolActionRequest).toHaveBeenCalledTimes(1));
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+
+    resolveApproval({ status: "executed", resultSummary: "Release completed" });
+    const res = await responsePromise;
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          toolAction: expect.objectContaining({
+            actionRequestId: "action-request-delayed",
+            executionStatus: "executed",
+            resultSummary: "Release completed",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("wakes with failure instructions after an accepted tool action fails", async () => {
     const approveToolActionRequest = vi.fn().mockResolvedValue({
       status: "failed",

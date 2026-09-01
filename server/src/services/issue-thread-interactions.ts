@@ -593,6 +593,14 @@ function shouldReturnAcceptedConfirmationToCreatorAgent(args: {
   actor: InteractionActor;
 }) {
   if (!isRequestConfirmationLikeKind(args.current.kind)) return false;
+  const payload = args.current.payload && typeof args.current.payload === "object" && !Array.isArray(args.current.payload)
+    ? args.current.payload as unknown as Record<string, unknown>
+    : null;
+  // Governed actions finish inside the interaction-resolution request. Returning
+  // the issue to `todo` here can start the assignee while the approved tool or
+  // secret action is still executing. Keep the issue in review; the route emits
+  // the continuation wake only after the action reaches a terminal result.
+  if (payload?.toolAction !== undefined || payload?.secretProposal !== undefined) return false;
   if (!args.current.createdByAgentId) return false;
   if (!args.actor.userId) return false;
   if (isTerminalIssueStatus(args.issue.status)) return false;

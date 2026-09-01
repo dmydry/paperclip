@@ -2469,6 +2469,68 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     });
   });
 
+  it("keeps governed action confirmations in review until their terminal continuation", async () => {
+    const { companyId, goalId, issueId } = await seedConfirmationIssue("Execute an approved action");
+    const agentId = randomUUID();
+
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Release owner",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db
+      .update(issues)
+      .set({ status: "in_review", assigneeAgentId: agentId })
+      .where(eq(issues.id, issueId));
+
+    const created = await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "request_confirmation",
+      continuationPolicy: "wake_assignee",
+      payload: {
+        version: 1,
+        prompt: "Approve the release?",
+        toolAction: {
+          version: 1,
+          actionRequestId: randomUUID(),
+          invocationId: randomUUID(),
+          toolName: "release_backend",
+          toolDisplayName: "Release backend",
+          connectionId: randomUUID(),
+          applicationId: randomUUID(),
+          appDisplayName: "Release gate",
+          risk: "write",
+          previewMarkdown: "Release the reviewed backend commit.",
+          argumentsSummaryJson: "{}",
+          argumentsHash: "reviewed-arguments",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      },
+    }, { agentId });
+
+    const accepted = await interactionsSvc.acceptInteraction({
+      id: issueId,
+      companyId,
+      goalId,
+      projectId: null,
+      status: "in_review",
+    }, created.id, {}, { userId: "local-board" });
+
+    expect(accepted.continuationIssue).toBeNull();
+    const updatedIssue = (await db.select().from(issues)).find((issue) => issue.id === issueId);
+    expect(updatedIssue).toMatchObject({
+      id: issueId,
+      status: "in_review",
+      assigneeAgentId: agentId,
+      assigneeUserId: null,
+    });
+  });
+
   it("expires request confirmations by default when a user comments after creation", async () => {
     const { companyId, issueId } = await seedConfirmationIssue();
     const commentId = randomUUID();
