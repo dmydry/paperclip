@@ -2032,6 +2032,35 @@ describe("shared ACPX engine runtime behavior", () => {
     ).toBe("second");
   });
 
+  it.each([
+    { code: "E2BIG", spawned: false, bootstrap: true },
+    { code: "E2BIG", spawned: true, bootstrap: false },
+    { code: "ACP_SESSION_INIT_FAILED", spawned: false, bootstrap: false },
+  ])("classifies only proven local pre-spawn failures: $code, spawned=$spawned", async ({ code, spawned, bootstrap }) => {
+    const root = await makeTempRoot();
+    const startTurn = vi.fn();
+    const execute = createAcpxEngineExecutor({
+      createRuntime: (options) => ({
+        ensureSession: async () => {
+          if (spawned) await options.onAgentSpawn?.({ pid: 99_999_999, startedAt: new Date().toISOString() });
+          throw Object.assign(new Error("spawn E2BIG"), { code, syscall: "spawn" });
+        },
+        startTurn,
+        close: async () => {},
+      }) as never,
+    });
+    const result = await execute({
+      runId: "run-1",
+      agent: { id: "agent-1", companyId: "company-1" },
+      runtime: {},
+      config: { agent: "custom", agentCommand: "node ./fake-acp.js", mode: "oneshot", stateDir: path.join(root, "state") },
+      context: {}, onLog: async () => {}, onMeta: async () => {},
+    } as never);
+    expect(result.exitCode).toBe(1);
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(result.executionRecovery).toEqual(bootstrap ? { kind: "bootstrap", providerWorkStarted: false } : undefined);
+  });
+
   it("enriches acpx.error diagnostics and child stderr when ensureSession rejects", async () => {
     const root = await makeTempRoot();
     const stateDir = path.join(root, "state");

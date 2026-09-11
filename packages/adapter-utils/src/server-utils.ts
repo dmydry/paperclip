@@ -1911,21 +1911,28 @@ export function stringifyPaperclipWakePayload(
     // section already carries the issue description; the env-var copy should
     // stay complete.
     omitIssueDescription?: boolean;
+    // Environment is only a convenience copy: the prompt carries the wake
+    // independently. Linux limits each argv/env string to 128 KiB (4 KiB pages).
+    forEnvironment?: boolean;
   } = {},
 ): string | null {
   const normalized = normalizePaperclipWakePayload(value);
   if (!normalized) return null;
-  if (options.omitIssueDescription === true && normalized.issue) {
-    return JSON.stringify({
+  const serialized = options.omitIssueDescription === true && normalized.issue
+    ? JSON.stringify({
       ...normalized,
       issue: {
         ...normalized.issue,
         description: null,
         descriptionTruncated: false,
       },
-    });
-  }
-  return JSON.stringify(normalized);
+    })
+    : JSON.stringify(normalized);
+  // Do not truncate history or serialize a misleading partial wake. Omit the
+  // optional env copy when large; renderPaperclipWakePrompt retains the full
+  // authorized context (or the verified resume delta) over stdin/ACP instead.
+  if (options.forEnvironment && Buffer.byteLength(serialized, "utf8") > 64 * 1024) return null;
+  return serialized;
 }
 
 export function isPaperclipRecoveryWakePayload(value: unknown): boolean {

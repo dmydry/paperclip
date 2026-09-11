@@ -1895,7 +1895,7 @@ async function buildRuntime(input: {
   const linkedIssueIds = Array.isArray(context.issueIds)
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
-  const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake, { forEnvironment: true });
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
   if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
@@ -4407,6 +4407,15 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             timedOut: false,
             errorMessage: message,
             ...classified,
+            // A local OS spawn rejection is evidence that no provider started,
+            // not an ambiguous interrupted action. Do not infer this from a
+            // handshake phase/message alone or from remote/provider errors.
+            ...(startupExecutionTarget?.kind !== "remote" && !prepared.processSessionBridge &&
+              !processIdentitySink.latest && err instanceof Error &&
+              (err as NodeJS.ErrnoException).code === "E2BIG" &&
+              (err as NodeJS.ErrnoException).syscall === "spawn"
+              ? { executionRecovery: { kind: "bootstrap" as const, providerWorkStarted: false as const } }
+              : {}),
             ...billingFields,
             ...referencedProjectStagingFailuresField,
             model: prepared.requestedModel || null,

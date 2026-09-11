@@ -9,6 +9,17 @@ const stopped = {
   },
 };
 
+it("does not require action reconciliation for a proven bootstrap failure", () => {
+  const failed = { runtimeMode: "legacy", status: "failed", errorCode: "acpx_session_init_failed" };
+  expect(legacyExecutionNeedsReconciliation({ ...failed, resultJson: {
+    executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+  } })).toBe(false);
+  expect(legacyExecutionNeedsReconciliation({ ...failed, resultJson: {} })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...failed, resultJson: {
+    executionRecovery: { kind: "bootstrap", providerWorkStarted: true },
+  } })).toBe(true);
+});
+
 it("allows a confirmed interrupted checkpoint without treating ordinary cancellation as replay permission", () => {
   expect(legacyExecutionNeedsReconciliation(stopped)).toBe(false);
   expect(legacyExecutionNeedsReconciliation({ ...stopped, resultJson: {} })).toBe(true);

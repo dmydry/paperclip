@@ -31,6 +31,14 @@ async function handleRequest(request) {
   }
   if (request.method === "session/new") return { sessionId: randomUUID() };
   if (request.method === "session/prompt") {
+    const largeWakeBytes = Number(process.env.PAPERCLIP_ACPX_LARGE_WAKE_BYTES);
+    if (largeWakeBytes > 0) {
+      const prompt = (request.params.prompt ?? []).map((block) => block.text ?? "").join("\n");
+      if (process.env.PAPERCLIP_WAKE_PAYLOAD_JSON !== undefined ||
+          !prompt.includes("x".repeat(largeWakeBytes) + "wake-end")) {
+        throw new Error("Large wake must arrive intact in the prompt, not the environment");
+      }
+    }
     const typedFailureCanary = process.env.PAPERCLIP_ACPX_TYPED_FAILURE_CANARY;
     if (typedFailureCanary) {
       if (!supportsTypedSessionFailure) {

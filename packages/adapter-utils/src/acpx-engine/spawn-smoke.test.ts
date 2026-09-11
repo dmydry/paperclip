@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-it("spawns a real Node ACP agent with per-session env on this platform", async () => {
+it.each([0, 220_000])("spawns a real Node ACP agent with per-session env and %i-byte continuation", async (largeWakeBytes) => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "paperclip-acpx-spawn-smoke-"),
   );
@@ -43,9 +43,12 @@ it("spawns a real Node ACP agent with per-session env on this platform", async (
       mode: "oneshot",
       stateDir,
       cwd: repoRoot,
-      env: { PAPERCLIP_ACPX_SPAWN_SMOKE: "spawn-ok" },
+      env: { PAPERCLIP_ACPX_SPAWN_SMOKE: "spawn-ok", PAPERCLIP_ACPX_LARGE_WAKE_BYTES: String(largeWakeBytes) },
     },
-    context: {},
+    context: largeWakeBytes ? { paperclipWake: {
+      reason: "issue_commented",
+      executionContinuation: { version: 1, messages: [{ body: "x".repeat(largeWakeBytes) + "wake-end" }] },
+    } } : {},
     onLog: async (_stream: string, text: string) => logs.push(text),
     onMeta: async () => {},
   } as never);
@@ -59,6 +62,24 @@ it("spawns a real Node ACP agent with per-session env on this platform", async (
   );
   expect(stderr).toContain("nes/close");
   expect(stderr).toContain("paperclip-acp-echo-agent started");
+});
+
+it.runIf(process.platform === "linux")("records an actual OS E2BIG as a pre-provider bootstrap failure", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-acpx-e2big-"));
+  tempRoots.push(root);
+  const onSpawn = async () => { throw new Error("The oversized environment must not spawn a provider"); };
+  const result = await createAcpxEngineExecutor()({
+    runId: "e2big-smoke", agent: { id: "spawn-agent", companyId: "spawn-company" },
+    runtime: {},
+    config: {
+      agent: "custom", agentCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(fixturePath)}`,
+      mode: "oneshot", stateDir: path.join(root, "state"), cwd: repoRoot,
+      env: { PAPERCLIP_E2BIG_TEST: "x".repeat(220_000) },
+    },
+    context: {}, onSpawn, onLog: async () => {}, onMeta: async () => {},
+  } as never);
+  expect(result.errorCode).toBe("acpx_session_init_failed");
+  expect(result.executionRecovery).toEqual({ kind: "bootstrap", providerWorkStarted: false });
 });
 
 it("fails closed on a typed ACP session failure without exposing its provider text", async () => {
