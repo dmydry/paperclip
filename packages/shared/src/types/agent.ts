@@ -1,6 +1,5 @@
 import type {
   AgentAdapterType,
-  ModelProfileKey,
   PauseReason,
   AgentRole,
   AgentStatus,
@@ -23,15 +22,7 @@ export interface AgentPermissions extends Record<string, unknown> {
   authorizationPolicy?: TrustAuthorizationPolicy;
 }
 
-export interface AgentModelProfileConfig {
-  enabled?: boolean;
-  label?: string;
-  adapterConfig: Record<string, unknown>;
-}
-
-export interface AgentRuntimeConfig extends Record<string, unknown> {
-  modelProfiles?: Partial<Record<ModelProfileKey, AgentModelProfileConfig>>;
-}
+export type AgentRuntimeConfig = Record<string, unknown>;
 
 export type AgentInstructionsBundleMode = "managed" | "external";
 
@@ -190,10 +181,24 @@ export interface AdapterAuthSessionPrompt {
   code: string;
 }
 
+// The account-binding claim of a finished Codex login. `secretId` is the
+// opaque company secret that names the signed-in account's own Codex home.
+// `companyIdentityDiffers` is true when the company default home stayed on a
+// DIFFERENT account — the promotion never displaces another account's claim —
+// which is exactly when binding an agent to this secret is the only way the
+// login can take effect for it. The claim carries no account identifier and
+// no credential byte, and the server returns it only through an owner read of
+// an `authenticated` session.
+export interface CodexAccountBindingClaim {
+  secretId: string;
+  companyIdentityDiffers: boolean;
+}
+
 // The owner read of a login session. It adds the one-time prompt to the public
 // response. Only the owner principal that started the session reads this shape.
 export interface AdapterAuthSessionOwnerResponse extends AdapterAuthSessionResponse {
   prompt: AdapterAuthSessionPrompt | null;
+  codexAccountBinding?: CodexAccountBindingClaim | null;
 }
 
 // The request that starts a login session for one adapter in one environment.
@@ -309,4 +314,16 @@ export interface AdapterEnvironmentTestResult {
   status: AdapterEnvironmentTestStatus;
   checks: AdapterEnvironmentCheck[];
   testedAt: string;
+}
+
+// The cheap tri-state authentication signal for one adapter type. "present"
+// means the host already has a usable credential. "absent" means the host has
+// no usable credential yet, but the caller can add one. "unknown" means the
+// route could not check, or the adapter type has no cheap signal. The route
+// that returns this value reads host-local state only; it never leases a
+// sandbox and never runs a shell command or a model request.
+export type AdapterAuthSignal = "present" | "absent" | "unknown";
+
+export interface AdapterAuthSignalResponse {
+  status: AdapterAuthSignal;
 }

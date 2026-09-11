@@ -6,6 +6,7 @@ export const BUILTIN_ADAPTER_TYPES = new Set([
   "claude_local",
   "codex_local",
   "codex_subscription_2_local",
+  "paperclip_runner",
   "cursor_cloud",
   "cursor",
   "gemini_local",

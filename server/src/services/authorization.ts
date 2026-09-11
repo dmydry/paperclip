@@ -28,6 +28,8 @@ import {
   type TrustPresetResolution,
 } from "./trust-preset-resolver.js";
 import { logger } from "../middleware/logger.js";
+import { normalizeAgentPermissions } from "./agent-permissions.js";
+import { grantsForHumanRole, normalizeHumanRole } from "./company-member-roles.js";
 
 export type AuthorizationActor =
   {
@@ -52,6 +54,7 @@ export type AuthorizationActor =
       | "agent_key"
       | "agent_jwt"
       | "cloud_tenant"
+      | "cloud_control"
       | "none";
   };
 
@@ -102,6 +105,7 @@ export type AuthorizationDecision = {
     | "allow_local_board"
     | "allow_instance_admin"
     | "allow_explicit_grant"
+    | "allow_role_default"
     | "allow_user_inbox_policy"
     | "allow_direct_change"
     | "allow_consented_change"
@@ -169,8 +173,10 @@ function permissionForAction(action: AuthorizationAction): PermissionKey | null 
 
 function canCreateAgentsLegacy(agent: { role: string; permissions: unknown }) {
   if (agent.role === "ceo") return true;
-  if (!agent.permissions || typeof agent.permissions !== "object") return false;
-  return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
+  // Raw agent rows may predate permission normalization; apply the same
+  // defaults the agent service applies on read so enforcement matches what
+  // the API reports.
+  return normalizeAgentPermissions(agent.permissions).canCreateAgents;
 }
 
 function scopeValueList(value: unknown): string[] {
@@ -251,6 +257,7 @@ type IssueAuthorizationRow = {
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
   checkoutRunId: string | null;
+  executionRunId: string | null;
   status: string;
   executionPolicy: unknown;
   originKind: string | null;
@@ -350,7 +357,7 @@ function agentIsInSubtree(
   return false;
 }
 
-async function loadCompanyAgentHierarchy(db: Db, companyId: string) {
+async function loadCompanyAgentHierarchy(db: Db | DbTransaction, companyId: string) {
   const rows = await db
     .select({ id: agents.id, reportsTo: agents.reportsTo })
     .from(agents)
@@ -358,7 +365,12 @@ async function loadCompanyAgentHierarchy(db: Db, companyId: string) {
   return new Map(rows.map((agent) => [agent.id, agent]));
 }
 
-async function isAgentInSubtree(db: Db, companyId: string, rootAgentId: string, targetAgentId: string) {
+async function isAgentInSubtree(
+  db: Db | DbTransaction,
+  companyId: string,
+  rootAgentId: string,
+  targetAgentId: string,
+) {
   return agentIsInSubtree(
     await loadCompanyAgentHierarchy(db, companyId),
     rootAgentId,
@@ -367,7 +379,7 @@ async function isAgentInSubtree(db: Db, companyId: string, rootAgentId: string, 
 }
 
 async function scopeAllows(
-  db: Db,
+  db: Db | DbTransaction,
   companyId: string,
   grantScope: Record<string, unknown> | null,
   requestedScope: Record<string, unknown> | null | undefined,
@@ -525,7 +537,9 @@ export function authorizationDeniedDetails(decision: AuthorizationDecision) {
   };
 }
 
-export function authorizationService(db: Db) {
+type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+export function authorizationService(db: Db | DbTransaction) {
   async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
     if (!userId) return false;
     if (
@@ -665,6 +679,19 @@ export function authorizationService(db: Db) {
 
     const grant = await findGrant(input.companyId, input.principalType, input.principalId, input.permissionKey);
     if (!grant) {
+      if (
+        input.principalType === "user"
+        && input.permissionKey.startsWith("tools:")
+        && (membership.membershipRole === "owner" || membership.membershipRole === "admin")
+        && grantsForHumanRole(normalizeHumanRole(membership.membershipRole, "operator"))
+          .some((defaultGrant) => defaultGrant.permissionKey === input.permissionKey)
+      ) {
+        return allow({
+          action: input.action,
+          reason: "allow_role_default",
+          explanation: `Allowed by the ${membership.membershipRole ?? "operator"} membership role.`,
+        });
+      }
       return deny({
         action: input.action,
         reason: "deny_missing_grant",
@@ -740,6 +767,7 @@ export function authorizationService(db: Db) {
         assigneeAgentId: issues.assigneeAgentId,
         assigneeUserId: issues.assigneeUserId,
         checkoutRunId: issues.checkoutRunId,
+        executionRunId: issues.executionRunId,
         status: issues.status,
         executionPolicy: issues.executionPolicy,
         originKind: issues.originKind,
@@ -769,13 +797,16 @@ export function authorizationService(db: Db) {
       : null;
   }
 
-  async function loadRunIssueId(runId: string | null | undefined, companyId: string, agentId: string) {
+  async function loadRunIssueBinding(runId: string | null | undefined, companyId: string, agentId: string) {
     if (!runId) return null;
     const row = await db
       .select({
         companyId: heartbeatRuns.companyId,
         agentId: heartbeatRuns.agentId,
         contextSnapshot: heartbeatRuns.contextSnapshot,
+        runtimeMode: heartbeatRuns.runtimeMode,
+        nativeIssueId: heartbeatRuns.nativeIssueId,
+        status: heartbeatRuns.status,
       })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
@@ -787,7 +818,8 @@ export function authorizationService(db: Db) {
       : typeof context?.taskId === "string"
         ? context.taskId.trim()
         : "";
-    return issueId || null;
+    const boundIssueId = row.runtimeMode === "native" ? row.nativeIssueId : issueId;
+    return boundIssueId ? { issueId: boundIssueId, runtimeMode: row.runtimeMode, status: row.status } : null;
   }
 
   async function resolveRunIssueCommentTarget(input: {
@@ -797,14 +829,16 @@ export function authorizationService(db: Db) {
     resource: AuthorizationResource;
   }) {
     if (input.resource.type !== "issue" || !input.resource.issueId) return null;
-    const runIssueId = await loadRunIssueId(input.actor.runId, input.companyId, input.actorAgentId);
-    if (!runIssueId) return null;
-    const runIssue = await loadIssue(runIssueId);
+    const binding = await loadRunIssueBinding(input.actor.runId, input.companyId, input.actorAgentId);
+    if (!binding) return null;
+    const runIssue = await loadIssue(binding.issueId);
     if (
       !runIssue ||
       runIssue.companyId !== input.companyId ||
       runIssue.assigneeAgentId !== input.actorAgentId ||
-      runIssue.checkoutRunId !== input.actor.runId
+      (binding.runtimeMode === "native"
+        ? binding.status !== "running" || runIssue.executionRunId !== input.actor.runId
+        : runIssue.checkoutRunId !== input.actor.runId)
     ) {
       return null;
     }
@@ -972,6 +1006,11 @@ export function authorizationService(db: Db) {
 
     if (
       input.action === "company_scope:read" ||
+      // Agent creation is a company-wide privileged action. The default-on
+      // canCreateAgents flag must never reach the legacy creator allow when
+      // the effective execution context (agent, project, issue, or run
+      // policy) resolves to low trust.
+      input.action === "agents:create" ||
       input.action === "decision_queue:manage" ||
       input.action === "decision_queue:read" ||
       input.action === "decision_triage:manage" ||
@@ -2252,6 +2291,26 @@ export function authorizationService(db: Db) {
       if (grantDecision.allowed) return grantDecision;
     }
 
+    if (input.action === "agents:create" && canCreateAgentsLegacy(actorAgent)) {
+      return allow({
+        action: input.action,
+        reason: "allow_legacy_agent_creator",
+        explanation: "Allowed by legacy agent creator authority.",
+      });
+    }
+
+    // Active-checkout management deliberately does not ride on
+    // canCreateAgents: that flag is default-on for standard-trust agents, and
+    // coupling would let any peer write over another agent's checked-out
+    // issue. CEOs, explicit grants, and the manager chain remain the paths.
+    if (input.action === "tasks:manage_active_checkouts" && actorAgent.role === "ceo") {
+      return allow({
+        action: input.action,
+        reason: "allow_legacy_agent_creator",
+        explanation: "Allowed by legacy agent creator authority.",
+      });
+    }
+
     if (
       input.action === "tasks:manage_active_checkouts" &&
       input.resource.type === "issue" &&
@@ -2262,18 +2321,6 @@ export function authorizationService(db: Db) {
         action: input.action,
         reason: "allow_manager_chain",
         explanation: "Allowed because the actor manages the issue assignee in the reporting chain.",
-      });
-    }
-
-    if (
-      (input.action === "agents:create" ||
-        input.action === "tasks:manage_active_checkouts") &&
-      canCreateAgentsLegacy(actorAgent)
-    ) {
-      return allow({
-        action: input.action,
-        reason: "allow_legacy_agent_creator",
-        explanation: "Allowed by legacy agent creator authority.",
       });
     }
 

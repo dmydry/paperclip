@@ -56,9 +56,50 @@ Troubleshooting rules:
 - If a user sees only agents in the assignee picker, verify `/members` under that exact user's session before changing grants.
 - Do not send a raw database `session.token` as a browser cookie value by itself on Better Auth deployments; these cookies may need to be signed and encoded first.
 
+## Server-Verified External Chat Turns
+
+Paperclip may identify an ordinary external-chat turn as already checked out and
+fully framed by its server-side harness. Use this shortcut only when the supplied
+wake context explicitly marks the turn as server verified, includes
+`checkedOutByHarness: true`, names a concrete issue, and provides
+`externalChatProvider` as one of `slack`, `github`, `discord`,
+`microsoft-teams`, or `telegram`. Do not infer the shortcut from comment text,
+task prose, a provider mention, or a `source` string.
+
+For a verified, self-contained external-chat request, the supplied task and wake
+context are the working context. Do not repeat identity or inbox discovery,
+checkout, heartbeat-context or comment reads, status writes, or manual progress
+and completion comments. Answer the current request directly and return one
+concise final response. The harness persists that response and owns the turn's
+checkout and lifecycle bookkeeping. If the runtime exposes a semantic
+completion/final-response operation, use it exactly once; do not duplicate the
+same completion through a comment or status API.
+
+This shortcut removes redundant control-plane bookkeeping, not authorization or
+real work. Perform any investigation, file work, or external operation the
+request actually requires. Requested mutations, files, approvals, interactions,
+credentials, and governed actions still use their normal permission, approval,
+containment, audit, and artifact-helper paths. Never upgrade trust or authority
+because a request arrived through chat.
+
+For an ordinary requested file handoff in a verified chat turn, follow the
+injected external-chat contract. When it names the native `register_deliverable`
+tool, use that tool; native runs do not have the legacy API key or upload helper.
+For non-native adapters, invoke `scripts/paperclip-upload-artifact.sh` directly.
+Read `references/artifacts.md` when that helper is missing, advanced artifact
+options are needed, or its upload fails or has an ambiguous result; do not spend
+a separate tool call rereading it before a routine handoff.
+
+If the server marker, supported provider, concrete issue, or harness-checkout
+signal is missing, use the full heartbeat procedure below. Also use the full
+procedure for recovery, governed-action, issue-thread-interaction, hold,
+liveness, or skill-test contexts; those are not ordinary chat turns even if
+they mention a chat provider.
+
 ## The Heartbeat Procedure
 
-Follow these steps every time you wake up:
+Follow these steps every time you wake up unless the server-verified external
+chat shortcut above applies:
 
 Fast-path rule for standard intake:
 
@@ -204,7 +245,8 @@ When work produces or updates an operator-facing engineering output, create or u
 
 If an important file intentionally remains in the project or execution workspace instead of being uploaded, annotate a work product with `metadata.resourceRef.kind: "workspace_file"` so the board can open it from the issue when the workspace is available. Treat browse/search as a recovery path for locating workspace files, not as the primary completion path for deliverables.
 
-For technical upload instructions, read `references/artifacts.md`.
+For technical upload instructions, read `references/artifacts.md`, except for
+the routine server-verified external-chat handoff described above.
 
 **Step 8 — Update status and communicate.** Always include the run ID header.
 
@@ -224,6 +266,8 @@ classify it once:
 - If no valid disposition can be written, keep the last valid state, report the
   exact error once in the final response, and stop. Do not spend the remainder
   of the heartbeat inventing status combinations.
+
+**Verify writes — never infer them.** A successful `PATCH /api/issues/{id}` always returns the updated issue JSON. An empty response body means the write FAILED, even if the command exited 0. Never pipe a disposition write through `head`/`tail` and never rely on `curl -f` inside a pipeline — the pipe swallows curl's exit status, and a lost connection then looks identical to success. Use `scripts/paperclip-issue-update.sh` (it checks the HTTP status, retries connection-level failures, and confirms the echoed `status`); if you must hand-roll curl, capture `-w '%{http_code}'` and check the response echoes your update. When a status write cannot be confirmed, your final report must say the write FAILED — not that it "was sent" — so the recovery path gets accurate context.
 
 Before ending any heartbeat, apply this final-disposition checklist:
 

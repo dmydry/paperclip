@@ -48,7 +48,7 @@ Before the first write, re-read active Paperclip runs and pending adapter-auth/s
 
 ```bash
 cd "$REPO"
-pnpm paperclipai db:backup --json
+node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts db:backup --json
 
 git merge --ff-only "$APPROVED_CANDIDATE_SHA"
 git push origin dev

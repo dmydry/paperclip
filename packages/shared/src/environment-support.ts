@@ -68,6 +68,7 @@ const REMOTE_MANAGED_ADAPTERS = new Set<AgentAdapterType>([
   "claude_local",
   "codex_local",
   "codex_subscription_2_local",
+  "paperclip_runner",
   "cursor",
   "gemini_local",
   "grok_local",

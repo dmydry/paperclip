@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -1583,7 +1582,7 @@ describeEmbeddedPostgres("authorization service", () => {
     })).resolves.toMatchObject({ allowed: false, reason: "deny_low_trust_boundary" });
   });
 
-  it("allows a run-scoped agent to comment on its current issue only", async () => {
+  it.each(["legacy", "native"] as const)("allows a %s run-scoped agent to comment on its current issue only", async (runtimeMode) => {
     const company = await createCompany(db, "RunScopedComment");
     const agent = await createAgent(db, company.id, { role: "engineer" });
     const currentIssue = await createIssue(db, company.id, {
@@ -1599,9 +1598,13 @@ describeEmbeddedPostgres("authorization service", () => {
       agentId: agent.id,
       invocationSource: "assignment",
       status: "running",
+      runtimeMode,
+      nativeIssueId: runtimeMode === "native" ? currentIssue.id : null,
       contextSnapshot: { issueId: currentIssue.id },
     }).returning().then((rows) => rows[0]!);
-    await db.update(issues).set({ checkoutRunId: run.id }).where(eq(issues.id, currentIssue.id));
+    await db.update(issues).set(runtimeMode === "native"
+      ? { executionRunId: run.id }
+      : { checkoutRunId: run.id }).where(eq(issues.id, currentIssue.id));
 
     const authorization = authorizationService(db);
     const actor = {
@@ -1631,6 +1634,15 @@ describeEmbeddedPostgres("authorization service", () => {
       action: "issue:comment",
       resource: resource(otherIssue),
     })).resolves.toMatchObject({ allowed: false, reason: "deny_missing_grant" });
+    if (runtimeMode === "native") {
+      await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, run.id));
+      await expect(authorization.decide({ actor, action: "issue:comment", resource: resource(currentIssue) }))
+        .resolves.toMatchObject({ allowed: false, reason: "deny_missing_grant" });
+      await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, run.id));
+      await db.update(issues).set({ executionRunId: null }).where(eq(issues.id, currentIssue.id));
+      await expect(authorization.decide({ actor, action: "issue:comment", resource: resource(currentIssue) }))
+        .resolves.toMatchObject({ allowed: false, reason: "deny_missing_grant" });
+    }
   });
 
   it("keeps low-trust comments and mutation inside the configured issue boundary", async () => {
@@ -2032,6 +2044,71 @@ describeEmbeddedPostgres("authorization service", () => {
     expect(decision).toMatchObject({
       allowed: true,
       reason: "allow_legacy_agent_creator",
+    });
+  });
+
+  it("grants hire authority through the persisted new-agent default", async () => {
+    const company = await createCompany(db, "DefaultHire");
+    // The service create path persists the create-context default
+    // (canCreateAgents: true for standard trust); enforcement reads it back.
+    const actorAgent = await createAgent(db, company.id, {
+      role: "engineer",
+      permissions: { canCreateAgents: true, canCreateSkills: true },
+    });
+
+    const decision = await authorizationService(db).decide({
+      actor: { type: "agent", agentId: actorAgent.id, companyId: company.id, source: "agent_jwt" },
+      action: "agents:create",
+      resource: { type: "company", companyId: company.id },
+    });
+
+    expect(decision).toMatchObject({
+      allowed: true,
+      reason: "allow_legacy_agent_creator",
+    });
+  });
+
+  it("keeps legacy rows without an explicit canCreateAgents fail-closed", async () => {
+    const company = await createCompany(db, "LegacyRowFailClosed");
+    const actorAgent = await createAgent(db, company.id, { role: "engineer", permissions: {} });
+
+    const decision = await authorizationService(db).decide({
+      actor: { type: "agent", agentId: actorAgent.id, companyId: company.id, source: "agent_jwt" },
+      action: "agents:create",
+      resource: { type: "company", companyId: company.id },
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      reason: "deny_missing_grant",
+    });
+  });
+
+  it("denies agent creation for a low-trust boundary even with explicit canCreateAgents", async () => {
+    const company = await createCompany(db, "LowTrustHireDenied");
+    const project = await createProject(db, company.id, "Contained");
+    const actorAgent = await createAgent(db, company.id, {
+      permissions: {
+        canCreateAgents: true,
+        trustPreset: LOW_TRUST_REVIEW_PRESET,
+        authorizationPolicy: {
+          trustBoundary: {
+            mode: LOW_TRUST_REVIEW_PRESET,
+            projectIds: [project.id],
+          },
+        },
+      },
+    });
+
+    const decision = await authorizationService(db).decide({
+      actor: { type: "agent", agentId: actorAgent.id, companyId: company.id, source: "agent_jwt" },
+      action: "agents:create",
+      resource: { type: "company", companyId: company.id },
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      reason: "deny_low_trust_boundary",
     });
   });
 

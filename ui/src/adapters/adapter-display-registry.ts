@@ -85,6 +85,12 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Local Codex agent using the second Paper-01 subscription",
     icon: Code,
   },
+  paperclip_runner: {
+    label: "Paperclip Runner",
+    description: "Experimental Rust runner with a Codex provider",
+    icon: Cpu,
+    experimental: true,
+  },
   gemini_local: {
     label: "Gemini CLI",
     description: "Gemini CLI harness",

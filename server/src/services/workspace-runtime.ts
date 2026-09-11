@@ -64,6 +64,7 @@ import {
 } from "./local-service-supervisor.js";
 import { workspaceOperationService, type WorkspaceOperationRecorder } from "./workspace-operations.js";
 import { executionWorkspaceService, readExecutionWorkspaceConfig } from "./execution-workspaces.js";
+import { isRuntimeOwnedGitBranch } from "./execution-workspace-branch-ownership.js";
 import { logActivity } from "./activity-log.js";
 import { readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { workspaceGitOperationScheduler } from "./workspace-git-operation-scheduler.js";
@@ -168,6 +169,13 @@ export interface RealizedExecutionWorkspace extends ExecutionWorkspaceInput {
   worktreePath: string | null;
   warnings: string[];
   created: boolean;
+  // Branch ownership, distinct from `created` (which reports a fresh worktree
+  // checkout). True only when this realization created the branch ref itself;
+  // attaching a worktree to a pre-existing branch keeps the branch
+  // operator-owned. Persisted with versioned branch-ownership metadata, which
+  // restore and terminal cleanup use to decide whether the branch may be
+  // recreated or deleted.
+  branchCreatedByRuntime: boolean;
   baseRefSha?: string | null;
   pendingForwardBranchReconcile?: PendingForwardBranchReconcile | null;
 }
@@ -676,6 +684,11 @@ export function sanitizeRuntimeServiceBaseEnv(baseEnv: NodeJS.ProcessEnv): NodeJ
       delete env[key];
     }
   }
+  // These origin settings belong to the parent instance. Letting them leak into a
+  // managed worktree runtime can send auth cookies and OAuth callbacks to the wrong
+  // Paperclip instance. Runtime/service overrides are merged back after sanitizing.
+  delete env.BETTER_AUTH_URL;
+  delete env.BETTER_AUTH_BASE_URL;
   delete env.DATABASE_URL;
   delete env.npm_config_tailscale_auth;
   delete env.npm_config_authenticated_private;
@@ -2387,26 +2400,116 @@ export async function ensureGitWorktreeBranchCoherent(input: {
   };
 }
 
+// A configured base ref that does not resolve to a commit, even after an
+// authenticated fetch of its `origin/<branch>` counterpart. The caller must
+// stop before `git worktree add` and raise a pre-dispatch configuration
+// failure. `requestedRef` keeps the operator spelling for the human notice.
+// `recoveryIdentityRef` is the canonical remote ref the resolver probed, so two
+// equivalent spellings of one remote branch map to one recovery identity.
+// `attemptedRefs` names each ref the resolver tried, and `fetchError` carries
+// the first fetch warning (masked) when the fetch itself failed.
+export class UnresolvedWorkspaceBaseRefError extends Error {
+  requestedRef: string;
+  recoveryIdentityRef: string;
+  attemptedRefs: string[];
+  fetchError: string | null;
+
+  constructor(input: {
+    requestedRef: string;
+    recoveryIdentityRef: string;
+    attemptedRefs: string[];
+    fetchError?: string | null;
+  }) {
+    super(
+      `Configured workspace base ref "${input.requestedRef}" did not resolve to a commit on origin after an authenticated fetch.`,
+    );
+    this.name = "UnresolvedWorkspaceBaseRefError";
+    this.requestedRef = input.requestedRef;
+    this.recoveryIdentityRef = input.recoveryIdentityRef;
+    this.attemptedRefs = input.attemptedRefs;
+    this.fetchError = input.fetchError ?? null;
+  }
+}
+
+export function isUnresolvedWorkspaceBaseRefError(error: unknown): error is UnresolvedWorkspaceBaseRefError {
+  return error instanceof UnresolvedWorkspaceBaseRefError;
+}
+
+// A resolved base ref that the caller can pass to `git worktree add`, or an
+// unresolved outcome that must stop the caller before it creates the worktree.
+type AuthoritativeBaseRefResolution =
+  | { resolved: true; baseRef: string; warnings: string[]; refreshed: boolean }
+  | {
+      resolved: false;
+      requestedRef: string;
+      // The canonical remote ref the resolver probed for this branch, for
+      // example `origin/fix/foo`. Two equivalent spellings of one remote branch
+      // (`fix/foo` and `origin/fix/foo`) share this value, so recovery treats
+      // them as one identity. Two different branches get different values.
+      recoveryIdentityRef: string;
+      attemptedRefs: string[];
+      warnings: string[];
+      fetchError: string | null;
+    };
+
 // Resolve the authoritative base ref for a fresh worktree. A configured local
 // branch is mapped to its `origin/<branch>` counterpart so unpushed local
-// divergence never leaks into the task branch; remote-tracking refs, SHAs, and
-// tags are used verbatim, and an unset/`HEAD` base falls back to the detected
-// default branch (which already prefers `origin/master`).
+// divergence never leaks into the task branch; SHAs and tags are used verbatim,
+// and an unset/`HEAD` base falls back to the detected default branch (which
+// already prefers `origin/master`).
+//
+// A remote-only feature branch never has a local ref or a remote-tracking ref
+// yet. The resolver fetches `origin/<branch>` with the authenticated helper,
+// then re-checks the commit. This covers both the unqualified form (`fix/foo`)
+// and the remote-tracking form (`origin/fix/foo`). A ref that still does not
+// resolve returns `resolved: false`, so the caller stops before the worktree
+// add instead of passing an invalid reference to git.
 async function resolveAuthoritativeBaseRef(
   repoRoot: string,
   configuredBaseRef: string | null,
   resolveGitAuth?: GitRemoteAuthProvider | null,
-): Promise<{ baseRef: string; warnings: string[]; refreshed: boolean }> {
+): Promise<AuthoritativeBaseRefResolution> {
   const warnings: string[] = [];
   const detectOrHead = async () => (await detectDefaultBranch(repoRoot, resolveGitAuth)) ?? "HEAD";
 
   const configured = configuredBaseRef?.trim();
   if (!configured || configured === "HEAD") {
-    return { baseRef: await detectOrHead(), warnings, refreshed: false };
+    return { resolved: true, baseRef: await detectOrHead(), warnings, refreshed: false };
   }
 
-  if (parseRemoteTrackingRef(configured)) {
-    return { baseRef: configured, warnings, refreshed: false };
+  // A remote-tracking ref supplied directly (for example `origin/fix/foo`).
+  // Use it verbatim when it already resolves. When it does not, fetch it once
+  // and re-check, then stop if it is still absent on the remote.
+  //
+  // `parseRemoteTrackingRef` only checks the `remote/branch` shape. An
+  // unqualified branch name that contains a slash (for example `fix/foo`) has
+  // the same shape but names no real remote, so it is not a remote-tracking
+  // ref. Gate this branch on the first segment naming an existing remote, and
+  // let a name like `fix/foo` fall through to the remote-only branch handling
+  // below.
+  const remoteTracking = parseRemoteTrackingRef(configured);
+  if (remoteTracking && await resolveBaseRefSha(repoRoot, configured)) {
+    return { resolved: true, baseRef: configured, warnings, refreshed: false };
+  }
+  if (remoteTracking && await remoteExists(repoRoot, remoteTracking.remote)) {
+    const fetchWarnings = await refreshRemoteTrackingBaseRef(repoRoot, configured, resolveGitAuth);
+    warnings.push(...fetchWarnings);
+    if (await resolveBaseRefSha(repoRoot, configured)) {
+      return { resolved: true, baseRef: configured, warnings, refreshed: true };
+    }
+    // Build the recovery identity from the parsed remote and branch. The raw
+    // ref and its remote-tracking spelling (`origin/fix/foo` and
+    // `refs/remotes/origin/fix/foo`) then share one recovery fingerprint, so
+    // recovery treats them as one identity instead of two.
+    const canonicalRemoteRef = `${remoteTracking.remote}/${remoteTracking.branch}`;
+    return {
+      resolved: false,
+      requestedRef: configured,
+      recoveryIdentityRef: canonicalRemoteRef,
+      attemptedRefs: [configured],
+      warnings,
+      fetchError: fetchWarnings[0] ?? null,
+    };
   }
 
   if (await localBranchExists(repoRoot, configured)) {
@@ -2415,17 +2518,37 @@ async function resolveAuthoritativeBaseRef(
     // the returned ref (see `refreshed`) so we never fetch the same ref twice.
     warnings.push(...await refreshRemoteTrackingBaseRef(repoRoot, remoteCandidate, resolveGitAuth));
     if (await resolveBaseRefSha(repoRoot, remoteCandidate)) {
-      return { baseRef: remoteCandidate, warnings, refreshed: true };
+      return { resolved: true, baseRef: remoteCandidate, warnings, refreshed: true };
     }
     if (await remoteExists(repoRoot, "origin")) {
       warnings.push(
         `Configured base ref "${configured}" is a local branch with no matching origin/${configured}; basing the execution workspace on the local ref, which may include unpushed commits.`,
       );
     }
-    return { baseRef: configured, warnings, refreshed: false };
+    return { resolved: true, baseRef: configured, warnings, refreshed: false };
   }
 
-  return { baseRef: configured, warnings, refreshed: false };
+  // Fall-through: an unqualified ref (for example `fix/foo`) that is not `HEAD`,
+  // not a remote-tracking ref, and not a local branch. A full SHA or a tag that
+  // already resolves stays verbatim. Otherwise treat it as a remote-only branch
+  // name: fetch `origin/<ref>` and base the worktree on the remote counterpart.
+  if (await resolveBaseRefSha(repoRoot, configured)) {
+    return { resolved: true, baseRef: configured, warnings, refreshed: false };
+  }
+  const remoteCandidate = `origin/${configured}`;
+  const fetchWarnings = await refreshRemoteTrackingBaseRef(repoRoot, remoteCandidate, resolveGitAuth);
+  warnings.push(...fetchWarnings);
+  if (await resolveBaseRefSha(repoRoot, remoteCandidate)) {
+    return { resolved: true, baseRef: remoteCandidate, warnings, refreshed: true };
+  }
+  return {
+    resolved: false,
+    requestedRef: configured,
+    recoveryIdentityRef: remoteCandidate,
+    attemptedRefs: [remoteCandidate],
+    warnings,
+    fetchError: fetchWarnings[0] ?? null,
+  };
 }
 
 // Auto-refresh a reused worktree to the latest base only when it is provably
@@ -3153,6 +3276,10 @@ export async function realizeExecutionWorkspace(input: {
   config: Record<string, unknown>;
   issue: ExecutionWorkspaceIssueRef | null;
   agent: ExecutionWorkspaceAgentRef;
+  recordedBranchOwnership?: {
+    branchName: string;
+    createdByRuntime: boolean;
+  } | null;
   heartbeatRunId?: string | null;
   enableWorkspaceBranchReconcileForward?: boolean;
   enableWorkspaceDirtyQuarantineRepair?: boolean;
@@ -3161,7 +3288,20 @@ export async function realizeExecutionWorkspace(input: {
 }): Promise<RealizedExecutionWorkspace> {
   const rawStrategy = parseObject(input.config.workspaceStrategy);
   const strategyType = asString(rawStrategy.type, "project_primary");
+  const requestedExistingBranch = asString(rawStrategy.existingBranch, "").trim();
   if (strategyType !== "git_worktree") {
+    if (requestedExistingBranch) {
+      throw new WorkspaceRuntimeValidationFailure(
+        `Workspace strategy pins existing branch "${requestedExistingBranch}" but has type "${strategyType}"; an exact-branch workspace requires strategy type "git_worktree". Set workspaceStrategy.type to "git_worktree" or remove existingBranch.`,
+        {
+          workspaceValidation: {
+            reason: "existing_branch_requires_git_worktree",
+            requestedExistingBranch,
+            strategyType,
+          },
+        },
+      );
+    }
     return {
       ...input.base,
       strategy: "project_primary",
@@ -3170,24 +3310,62 @@ export async function realizeExecutionWorkspace(input: {
       worktreePath: null,
       warnings: [],
       created: false,
+      branchCreatedByRuntime: false,
       baseRefSha: null,
     };
   }
 
   const repoRoot = await resolveGitOwnerRepoRoot(input.base.baseCwd);
-  const branchTemplate = asString(rawStrategy.branchTemplate, "{{issue.identifier}}-{{slug}}");
-  const renderedBranch = renderWorkspaceTemplate(branchTemplate, {
-    issue: input.issue,
-    agent: input.agent,
-    projectId: input.base.projectId,
-    repoRef: input.base.repoRef,
-  });
-  let branchName = sanitizeBranchName(renderedBranch);
+  let branchName: string;
+  if (requestedExistingBranch) {
+    // Exact-branch mode: attach the requested pre-existing branch verbatim.
+    // The branch must already exist; realization never creates, renames, or
+    // resets it, and any mismatch below fails closed instead of falling back
+    // to a derived branch or the shared checkout.
+    const existingBranchSha = await runGit(
+      ["rev-parse", "--verify", "--quiet", `refs/heads/${requestedExistingBranch}`],
+      repoRoot,
+    ).catch(() => null);
+    if (!existingBranchSha) {
+      throw new WorkspaceRuntimeValidationFailure(
+        `Workspace strategy pins existing branch "${requestedExistingBranch}", but no local branch with that name exists in "${repoRoot}". Create or fetch the branch first, or remove workspaceStrategy.existingBranch; exact-branch realization never creates a branch.`,
+        {
+          workspaceValidation: {
+            reason: "existing_branch_not_found",
+            requestedExistingBranch,
+            repoRoot,
+          },
+        },
+      );
+    }
+    branchName = requestedExistingBranch;
+  } else {
+    const branchTemplate = asString(rawStrategy.branchTemplate, "{{issue.identifier}}-{{slug}}");
+    const renderedBranch = renderWorkspaceTemplate(branchTemplate, {
+      issue: input.issue,
+      agent: input.agent,
+      projectId: input.base.projectId,
+      repoRef: input.base.repoRef,
+    });
+    branchName = sanitizeBranchName(renderedBranch);
+  }
   const configuredParentDir = asString(rawStrategy.worktreeParentDir, "");
   const worktreeParentDir = configuredParentDir
     ? resolveConfiguredPath(configuredParentDir, repoRoot)
     : path.join(repoRoot, ".paperclip", "worktrees");
   const worktreePath = path.join(worktreeParentDir, branchName);
+  if (path.relative(worktreeParentDir, worktreePath).startsWith("..")) {
+    throw new WorkspaceRuntimeValidationFailure(
+      `Workspace branch "${branchName}" resolves to a worktree path outside the managed worktree parent directory "${worktreeParentDir}".`,
+      {
+        workspaceValidation: {
+          reason: "worktree_path_escapes_parent_dir",
+          branchName,
+          worktreeParentDir,
+        },
+      },
+    );
+  }
   let pendingForwardBranchReconcile: PendingForwardBranchReconcile | null = null;
   const configuredBaseRef = typeof rawStrategy.baseRef === "string" && rawStrategy.baseRef.length > 0
     ? rawStrategy.baseRef
@@ -3195,11 +3373,15 @@ export async function realizeExecutionWorkspace(input: {
   const reuseSyncStrategy = rawStrategy.reuseSyncStrategy === "rebase" || rawStrategy.reuseSyncStrategy === "reset_hard"
     ? (rawStrategy.reuseSyncStrategy as WorktreeReuseSyncStrategy)
     : null;
-  const {
-    baseRef,
-    warnings: baseRefResolutionWarnings,
-    refreshed: baseRefAlreadyRefreshed,
-  } = await resolveAuthoritativeBaseRef(repoRoot, configuredBaseRef, input.resolveGitAuth);
+  const baseRefResolution = await resolveAuthoritativeBaseRef(repoRoot, configuredBaseRef, input.resolveGitAuth);
+  // Keep a usable base ref for the reuse and drift paths even when the ref is
+  // unresolved: those paths tolerate a null base-ref SHA and never run
+  // `git worktree add -b <branch> <baseRef>`. Only the fresh-create path below
+  // stops on an unresolved ref. `baseRefAlreadyRefreshed` is true for the
+  // unresolved case because the resolver already attempted the fetch.
+  const baseRef = baseRefResolution.resolved ? baseRefResolution.baseRef : baseRefResolution.requestedRef;
+  const baseRefResolutionWarnings = baseRefResolution.warnings;
+  const baseRefAlreadyRefreshed = baseRefResolution.resolved ? baseRefResolution.refreshed : true;
   const baseRefreshWarnings = [
     ...baseRefResolutionWarnings,
     ...(baseRefAlreadyRefreshed ? [] : await refreshRemoteTrackingBaseRef(repoRoot, baseRef, input.resolveGitAuth)),
@@ -3210,7 +3392,7 @@ export async function realizeExecutionWorkspace(input: {
 
   async function reuseExistingWorktree(reusablePath: string, effectiveBranchName = branchName, extraWarnings: string[] = []) {
     let refresh: { refreshed: boolean; baseRefSha: string | null };
-    if (reuseSyncStrategy) {
+    if (reuseSyncStrategy && currentBaseRefSha && !requestedExistingBranch) {
       await syncExistingWorktreeToBaseRef({
         repoRoot,
         worktreePath: reusablePath,
@@ -3221,7 +3403,7 @@ export async function realizeExecutionWorkspace(input: {
       });
       refresh = { refreshed: true, baseRefSha: currentBaseRefSha };
     } else {
-      refresh = currentBaseRefSha
+      refresh = currentBaseRefSha && !requestedExistingBranch
         ? await refreshUnstartedWorktreeToBase({
             repoRoot,
             worktreePath: reusablePath,
@@ -3281,6 +3463,15 @@ export async function realizeExecutionWorkspace(input: {
       worktreePath: reusablePath,
       warnings: [...extraWarnings, ...baseRefreshWarnings, ...baseDrift.warnings],
       created: false,
+      // A fresh realization may still land on the worktree recorded by a
+      // previous heartbeat. Preserve that branch's ownership only when the
+      // recorded branch matches the checkout being reused. Exact-branch mode
+      // remains operator-owned by contract; every mismatch likewise fails
+      // safe and leaves the branch behind during terminal cleanup.
+      branchCreatedByRuntime:
+        !requestedExistingBranch
+        && input.recordedBranchOwnership?.branchName === effectiveBranchName
+        && input.recordedBranchOwnership.createdByRuntime === true,
       baseRefSha: refresh.baseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha,
       pendingForwardBranchReconcile,
     };
@@ -3293,6 +3484,11 @@ export async function realizeExecutionWorkspace(input: {
       expectedBranchName: branchName,
     }).catch(() => null);
     if (validation && !validation.valid && validation.reasonCode === "branch_mismatch") {
+      if (requestedExistingBranch) {
+        // Exact-branch mode never reconciles a mismatched checkout onto
+        // another branch; the caller fails closed with the mismatch reason.
+        return { validation, branchName, warnings: [] };
+      }
       const coherence = await ensureGitWorktreeBranchCoherent({
         db: input.db ?? null,
         repoRoot,
@@ -3334,6 +3530,19 @@ export async function realizeExecutionWorkspace(input: {
     }
     const validation = reusable.validation;
     const reason = validation && !validation.valid ? ` (${validation.reason})` : "";
+    if (requestedExistingBranch) {
+      throw new WorkspaceRuntimeValidationFailure(
+        `Workspace strategy pins existing branch "${requestedExistingBranch}", but the worktree path "${worktreePath}" already exists and is not a reusable checkout of that branch${reason}. Repair or remove that worktree, then retry; exact-branch realization never reconciles it onto another branch.`,
+        {
+          workspaceValidation: {
+            reason: "existing_branch_worktree_not_reusable",
+            reasonCode: validation && !validation.valid ? validation.reasonCode : null,
+            requestedExistingBranch,
+            worktreePath,
+          },
+        },
+      );
+    }
     throw new Error(`Configured worktree path "${worktreePath}" already exists and is not a reusable git worktree${reason}.`);
   }
 
@@ -3345,10 +3554,94 @@ export async function realizeExecutionWorkspace(input: {
     }
     const validation = reusable.validation;
     const reason = validation && !validation.valid ? ` (${validation.reason})` : "";
+    if (requestedExistingBranch) {
+      throw new WorkspaceRuntimeValidationFailure(
+        `Workspace strategy pins existing branch "${requestedExistingBranch}", which is already checked out at "${registeredBranchWorktree}", but that worktree is not reusable${reason}. Repair or remove that worktree, then retry.`,
+        {
+          workspaceValidation: {
+            reason: "existing_branch_worktree_not_reusable",
+            reasonCode: validation && !validation.valid ? validation.reasonCode : null,
+            requestedExistingBranch,
+            worktreePath: registeredBranchWorktree,
+          },
+        },
+      );
+    }
     throw new Error(`Registered worktree for branch "${branchName}" at "${registeredBranchWorktree}" is not reusable${reason}.`);
   }
 
-  await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
+  if (requestedExistingBranch) {
+    try {
+      await recordGitOperation(input.recorder, {
+        phase: "worktree_prepare",
+        args: ["worktree", "add", worktreePath, branchName],
+        cwd: repoRoot,
+        metadata: {
+          repoRoot,
+          worktreePath,
+          branchName,
+          baseRef,
+          baseRefSha: currentBaseRefSha,
+          created: false,
+          attachedExistingBranch: true,
+        },
+        successMessage: `Attached existing branch ${branchName} at ${worktreePath}\n`,
+        failureLabel: `git worktree add ${worktreePath}`,
+      });
+    } catch (attachError) {
+      const message = attachError instanceof Error ? attachError.message : String(attachError);
+      throw new WorkspaceRuntimeValidationFailure(
+        `Could not attach existing branch "${requestedExistingBranch}" as a git worktree at "${worktreePath}": ${message}`,
+        {
+          workspaceValidation: {
+            reason: "existing_branch_attach_failed",
+            requestedExistingBranch,
+            worktreePath,
+          },
+        },
+      );
+    }
+    await provisionExecutionWorktree({
+      strategy: rawStrategy,
+      base: input.base,
+      repoRoot,
+      worktreePath,
+      branchName,
+      issue: input.issue,
+      agent: input.agent,
+      created: true,
+      recorder: input.recorder ?? null,
+    });
+    return {
+      ...input.base,
+      repoRef: baseRef,
+      strategy: "git_worktree",
+      cwd: worktreePath,
+      branchName,
+      worktreePath,
+      warnings: baseRefreshWarnings,
+      // The worktree is new, but the pinned branch pre-existed: it stays
+      // operator-owned so terminal cleanup never deletes it.
+      created: true,
+      branchCreatedByRuntime: false,
+      baseRefSha: currentBaseRefSha,
+    };
+  }
+
+  // No reusable worktree exists, so a fresh `git worktree add -b <branch> <baseRef>`
+  // must run next. An unresolved base ref would make git fail with
+  // `fatal: invalid reference`. Stop here instead and raise a pre-dispatch
+  // configuration failure that the setup catch routes to a human owner.
+  if (!baseRefResolution.resolved) {
+    throw new UnresolvedWorkspaceBaseRefError({
+      requestedRef: baseRefResolution.requestedRef,
+      recoveryIdentityRef: baseRefResolution.recoveryIdentityRef,
+      attemptedRefs: baseRefResolution.attemptedRefs,
+      fetchError: baseRefResolution.fetchError,
+    });
+  }
+
+  let branchCreatedByRuntime = true;
   try {
     await recordGitOperation(input.recorder, {
       phase: "worktree_prepare",
@@ -3386,6 +3679,9 @@ export async function realizeExecutionWorkspace(input: {
         successMessage: `Attached existing branch ${branchName} at ${worktreePath}\n`,
         failureLabel: `git worktree add ${worktreePath}`,
       });
+      // The template rendered to a branch that already existed, so this
+      // attach did not create the branch and cleanup must not delete it.
+      branchCreatedByRuntime = false;
     } catch (attachError) {
       if (!gitErrorIncludes(attachError, "already checked out")) {
         throw attachError;
@@ -3418,6 +3714,7 @@ export async function realizeExecutionWorkspace(input: {
     worktreePath,
     warnings: baseRefreshWarnings,
     created: true,
+    branchCreatedByRuntime,
     baseRefSha: currentBaseRefSha,
   };
 }
@@ -3468,6 +3765,11 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     worktreePath: strategy === "git_worktree" ? (input.workspace.providerRef ?? cwd) : null,
     warnings: [],
     created: false,
+    // Only the versioned ownership record introduced with branch-level
+    // ownership semantics can authorize branch recreation or deletion. Older
+    // createdByRuntime=true rows described worktree ownership, so trusting
+    // them here could recreate or later delete an operator-owned branch.
+    branchCreatedByRuntime: isRuntimeOwnedGitBranch(input.workspace.metadata),
     baseRefSha: readRecordedBaseRefSha(input.workspace.metadata),
   };
   const provisionCommand = asString(input.workspace.config?.provisionCommand, "").trim();
@@ -3501,7 +3803,12 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     const reuseBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
     const reuseWorktreePath = realized.worktreePath ?? cwd;
     const repairWarnings: string[] = [];
-    if (await isGitCheckout(reuseWorktreePath)) {
+    if (await isGitCheckout(reuseWorktreePath) && realized.branchCreatedByRuntime) {
+      // Branch-coherence repair may check out another branch, adopt a forward
+      // branch, or move the recorded ref from a detached HEAD. Those repairs
+      // are valid only for a branch that this runtime created. An attached
+      // operator-owned branch must retain its exact identity and tip; the
+      // validation below rejects any mismatch without mutating Git state.
       const coherence = await ensureGitWorktreeBranchCoherent({
         db: input.db ?? null,
         repoRoot,
@@ -3546,7 +3853,9 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
       ? await refreshRemoteTrackingBaseRef(repoRoot, reuseBaseRef, input.resolveGitAuth)
       : [];
     const currentBaseRefSha = reuseBaseRef ? await resolveBaseRefSha(repoRoot, reuseBaseRef) : null;
-    const refresh = reuseBaseRef && currentBaseRefSha
+    // An unstarted-worktree refresh can fast-forward the checked-out branch.
+    // Never run it for an attached operator-owned ref.
+    const refresh = realized.branchCreatedByRuntime && reuseBaseRef && currentBaseRefSha
       ? await refreshUnstartedWorktreeToBase({
           repoRoot,
           worktreePath: reuseWorktreePath,
@@ -3623,6 +3932,11 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     ) {
       throw error;
     }
+    if (!realized.branchCreatedByRuntime) {
+      throw new Error(
+        `Execution workspace "${worktreePath}" cannot be restored because its operator-owned branch "${branchName}" no longer exists.`,
+      );
+    }
     const baseRef = input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
     const recreatedBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
     await recordGitOperation(input.recorder, {
@@ -3674,6 +3988,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     worktreePath,
     warnings: [...restoreRefreshWarnings, ...baseDrift.warnings],
     created,
+    branchCreatedByRuntime: realized.branchCreatedByRuntime || created,
     baseRefSha:
       recordedBaseRefSha
       ?? (created ? restoreCurrentBaseRefSha : baseDrift.branchBaseRefSha)
@@ -3834,7 +4149,12 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
       warnings.push(`Could not read worktree instance pointer: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  // Local-directory ownership keeps the historical createdByRuntime signal.
+  // Git branch deletion additionally requires the version marker introduced
+  // with branch-level ownership semantics. Unmarked legacy rows fail closed:
+  // their worktrees are removable, but their branch refs are operator-owned.
   const createdByRuntime = input.workspace.metadata?.createdByRuntime === true;
+  const branchCreatedByRuntime = isRuntimeOwnedGitBranch(input.workspace.metadata);
   const cleanupCommands = input.runCleanupCommands === false
     ? []
     : [
@@ -3921,7 +4241,7 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
         }
       }
     }
-    if (createdByRuntime && input.workspace.branchName) {
+    if (branchCreatedByRuntime && input.workspace.branchName) {
       if (!repoRoot) {
         warnings.push(`Could not resolve git repo root to delete branch "${input.workspace.branchName}".`);
       } else {
@@ -4955,6 +5275,151 @@ function isPaperclipDevRuntimeService(input: { serviceName?: string | null; comm
   );
 }
 
+export const MANAGED_RUNTIME_PUBLIC_URL_ENV = "PAPERCLIP_MANAGED_RUNTIME_PUBLIC_URL";
+
+const EXPLICIT_RUNTIME_ORIGIN_ENV_KEYS = [
+  "PAPERCLIP_PUBLIC_URL",
+  "PAPERCLIP_AUTH_PUBLIC_BASE_URL",
+  "BETTER_AUTH_URL",
+  "BETTER_AUTH_BASE_URL",
+] as const;
+
+function isLoopbackRuntimeHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized === "::1") return true;
+  if (net.isIP(normalized) !== 4) return false;
+  const firstOctet = Number(normalized.split(".")[0]);
+  return firstOctet === 127;
+}
+
+function managedRuntimeOriginError(serviceName: string, reason: string) {
+  return new Error(
+    `Runtime service "${serviceName}" cannot derive a browser-reachable OAuth callback origin: ${reason}. `
+    + "Configure PAPERCLIP_PUBLIC_URL or BETTER_AUTH_URL for this service, or publish an HTTPS expose.urlTemplate "
+    + "that the operator's browser can reach (loopback HTTP is also supported).",
+  );
+}
+
+type TrustedRuntimeHostnameBoundary =
+  | { exactHostname: string; hostnameSuffix?: never }
+  | { exactHostname?: never; hostnameSuffix: string };
+
+function trustedRuntimeHostnameBoundary(
+  urlTemplate: string | null | undefined,
+): TrustedRuntimeHostnameBoundary | null {
+  if (!urlTemplate?.trim()) return null;
+  let markerIndex = 0;
+  const markerPrefix = "paperclip-runtime-template-";
+  const safeTemplate = urlTemplate.replace(
+    /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g,
+    (_match, path: string) => path === "port" ? "443" : `${markerPrefix}${markerIndex++}`,
+  );
+  let parsed: URL;
+  try {
+    parsed = new URL(safeTemplate);
+  } catch {
+    return null;
+  }
+  if (parsed.username || parsed.password) return null;
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+  const hostname = parsed.hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const markers = [...hostname.matchAll(/paperclip-runtime-template-\d+/g)];
+  const lastMarker = markers.at(-1);
+  if (!lastMarker || lastMarker.index === undefined) {
+    return hostname ? { exactHostname: hostname } : null;
+  }
+
+  const hostnameSuffix = hostname.slice(lastMarker.index + lastMarker[0].length);
+  // A dynamic non-loopback hostname needs at least a stable two-label domain
+  // after the final interpolation. This binds rendered branch/workspace values
+  // to the operator-configured domain instead of trusting URL parsing alone.
+  if (!hostnameSuffix.startsWith(".") || !hostnameSuffix.slice(1).includes(".")) return null;
+  return { hostnameSuffix };
+}
+
+/**
+ * Resolve the low-priority public URL hint injected into a managed Paperclip dev
+ * service. Explicit operator origin settings are deliberately left untouched.
+ */
+export function resolveManagedPaperclipRuntimePublicOrigin(input: {
+  serviceName: string;
+  command: string;
+  environment: Record<string, string>;
+  exposedUrl: string | null;
+  exposedUrlTemplate?: string | null;
+}) {
+  if (!isPaperclipDevRuntimeService(input)) return null;
+  if (EXPLICIT_RUNTIME_ORIGIN_ENV_KEYS.some((key) => input.environment[key]?.trim())) return null;
+  if (!input.exposedUrl) {
+    throw managedRuntimeOriginError(input.serviceName, "the managed service does not report an exposed URL");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(input.exposedUrl);
+  } catch {
+    throw managedRuntimeOriginError(input.serviceName, "the managed service reports an invalid exposed URL");
+  }
+
+  if (parsed.username || parsed.password) {
+    throw managedRuntimeOriginError(input.serviceName, "the exposed URL contains credentials");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw managedRuntimeOriginError(input.serviceName, "the exposed URL must use HTTP or HTTPS");
+  }
+
+  const hostname = parsed.hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const loopback = isLoopbackRuntimeHostname(hostname);
+  if (!hostname || hostname === "0.0.0.0" || hostname === "::") {
+    throw managedRuntimeOriginError(input.serviceName, "the exposed URL uses a bind-only hostname");
+  }
+  if (
+    !loopback
+    && (
+      (!hostname.includes(".") && net.isIP(hostname) === 0)
+      || hostname.endsWith(".invalid")
+      || hostname.endsWith(".test")
+      || hostname.endsWith(".internal")
+      || hostname.endsWith(".localdomain")
+      || hostname === "example.com"
+      || hostname.endsWith(".example.com")
+      || hostname === "example.net"
+      || hostname.endsWith(".example.net")
+      || hostname === "example.org"
+      || hostname.endsWith(".example.org")
+    )
+  ) {
+    throw managedRuntimeOriginError(
+      input.serviceName,
+      `the exposed hostname "${hostname}" is internal-only or non-resolvable from a normal browser`,
+    );
+  }
+  if (!loopback && parsed.protocol !== "https:") {
+    throw managedRuntimeOriginError(input.serviceName, "non-loopback OAuth callbacks require HTTPS");
+  }
+  if (!loopback) {
+    const boundary = trustedRuntimeHostnameBoundary(input.exposedUrlTemplate);
+    if (!boundary) {
+      throw managedRuntimeOriginError(
+        input.serviceName,
+        "the exposed URL template does not define a stable hostname boundary",
+      );
+    }
+    const withinBoundary = "exactHostname" in boundary
+      ? hostname === boundary.exactHostname
+      : hostname.length > boundary.hostnameSuffix.length && hostname.endsWith(boundary.hostnameSuffix);
+    if (!withinBoundary) {
+      throw managedRuntimeOriginError(
+        input.serviceName,
+        `the exposed hostname "${hostname}" is outside the hostname boundary configured by expose.urlTemplate`,
+      );
+    }
+  }
+
+  return parsed.origin;
+}
+
 function resolveRuntimeServiceHealthUrl(
   url: string | null,
   input?: { serviceName?: string | null; command?: string | null },
@@ -5729,12 +6194,26 @@ async function spawnLocalRuntimeService(input: StartLocalRuntimeServiceInput): P
     port === identityPort
       ? identity.serviceCwd
       : resolveConfiguredPath(renderTemplate(asString(input.service.cwd, "."), templateData), input.workspace.cwd);
+  const runtimeEnvOverrides: Record<string, string> = { ...input.adapterEnv };
+  for (const [key, value] of Object.entries(renderRuntimeServiceEnv({ envConfig, templateData }))) {
+    runtimeEnvOverrides[key] = value;
+  }
   const env: Record<string, string> = {
     ...sanitizeRuntimeServiceBaseEnv(process.env),
-    ...input.adapterEnv,
+    ...runtimeEnvOverrides,
   } as Record<string, string>;
-  for (const [key, value] of Object.entries(renderRuntimeServiceEnv({ envConfig, templateData }))) {
-    env[key] = value;
+  // Managed Paperclip worktrees are development environments, so their UI
+  // should track source edits without each project repeating this setting.
+  // An HTTPS profile must publish the companion HMR listener before it can use
+  // this default. Otherwise, leave the value unset so dev-runner keeps its
+  // built-UI safeguard. Keep every explicit service/adapter value.
+  const uiDevMiddlewareHasTransport =
+    !exposureConfig || exposureConfig.includePaperclipViteHmr;
+  if (
+    uiDevMiddlewareHasTransport
+    && isPaperclipDevRuntimeService({ serviceName, command })
+  ) {
+    env.PAPERCLIP_UI_DEV_MIDDLEWARE ??= "true";
   }
   if (port) {
     const portEnvKey = asString(portConfig.envKey, "PORT");
@@ -5784,6 +6263,20 @@ async function spawnLocalRuntimeService(input: StartLocalRuntimeServiceInput): P
   let url = exposureConfig ? null : backendUrl;
   const readinessUrlTemplate = asString(readiness.urlTemplate, "");
   const readinessUrl = readinessUrlTemplate ? renderTemplate(readinessUrlTemplate, templateData) : null;
+  const managedRuntimePublicOrigin = resolveManagedPaperclipRuntimePublicOrigin({
+    serviceName,
+    command,
+    // Includes the trusted public origin injected above for managed HTTPS
+    // exposure. The inherited parent environment was already sanitized, so
+    // any remaining explicit origin is either service-configured or broker-
+    // derived for this exact runtime.
+    environment: env,
+    exposedUrl: url,
+    exposedUrlTemplate: urlTemplate,
+  });
+  if (managedRuntimePublicOrigin) {
+    env[MANAGED_RUNTIME_PUBLIC_URL_ENV] = managedRuntimePublicOrigin;
+  }
   const stopPolicy = parseObject(input.service.stopPolicy);
   const serviceKey = createLocalServiceKey({
     profileKind: "workspace-runtime",
@@ -6734,9 +7227,22 @@ function registerRuntimeService(db: Db | undefined, record: RuntimeServiceRecord
       runtimeServicesByReuseKey.delete(current.reuseKey);
     }
     void (async () => {
-      await cleanupRecordExposure(current);
-      await removeLocalServiceRegistryRecord(current.serviceKey);
-      await persistRuntimeServiceRecord(db, current);
+      // The child exited on its own. Record the terminal status as best effort.
+      // The persist can fail when a parent row is already gone: a caller can
+      // delete the project or the company while this service still runs, and the
+      // `project_id` foreign key then rejects the write. Catch every error here,
+      // or the detached persist becomes an unhandled rejection and crashes the
+      // host. This path runs off the child `exit` event, so no caller awaits it.
+      try {
+        await cleanupRecordExposure(current);
+        await removeLocalServiceRegistryRecord(current.serviceKey);
+        await persistRuntimeServiceRecord(db, current);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[workspace-runtime] runtime service exit cleanup failed for ${current.id}: ${detail}`,
+        );
+      }
     })();
   });
 }
@@ -7086,6 +7592,7 @@ type StartRuntimeServicesForWorkspaceControlInput = {
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   recorder?: WorkspaceOperationRecorder | null;
   serviceIndex?: number | null;
+  runtimeServiceId?: string | null;
   respectDesiredStates?: boolean;
 };
 
@@ -7117,6 +7624,7 @@ async function startRuntimeServicesForWorkspaceControlUnlocked(
   const refs: RuntimeServiceRef[] = [];
   const pendingReadiness: PendingRuntimeServiceReadiness[] = [];
   const startedServiceIds: string[] = [];
+  const requestedRuntimeServiceId = rawServices.length === 1 ? input.runtimeServiceId : null;
 
   for (const service of rawServices) {
     const { scopeType, scopeId } = resolveServiceScopeId({
@@ -7139,7 +7647,7 @@ async function startRuntimeServicesForWorkspaceControlUnlocked(
 
     if (reuseKey) {
       const existing = await findHealthyRunningRuntimeService(reuseKey);
-      if (existing) {
+      if (existing && (!requestedRuntimeServiceId || existing.id === requestedRuntimeServiceId)) {
         const prepared = options?.preparedProvisioning;
         if (prepared?.service === service && prepared.record.id !== existing.id && persistenceDb) {
           await persistenceDb
@@ -7181,6 +7689,7 @@ async function startRuntimeServicesForWorkspaceControlUnlocked(
           : undefined,
       allowFixedPortFallback: options?.allowFixedPortFallback,
       excludedPorts: options?.excludedPorts,
+      runtimeServiceId: requestedRuntimeServiceId ?? undefined,
       reuseKey,
       scopeType,
       scopeId,
@@ -8189,6 +8698,7 @@ export async function restartDesiredRuntimeServicesOnStartup(db: Db) {
           worktreePath: null,
           warnings: [],
           created: false,
+          branchCreatedByRuntime: false,
         },
         config: {
           workspaceRuntime: runtimeConfig.workspaceRuntime,
@@ -8243,6 +8753,9 @@ export async function restartDesiredRuntimeServicesOnStartup(db: Db) {
           worktreePath: row.strategyType === "git_worktree" ? row.cwd : null,
           warnings: [],
           created: false,
+          branchCreatedByRuntime: isRuntimeOwnedGitBranch(
+            row.metadata as Record<string, unknown> | null,
+          ),
         },
         executionWorkspaceId: row.id,
         config: {

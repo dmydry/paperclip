@@ -168,6 +168,64 @@ describe("IssueRecoveryActionCard", () => {
     );
   });
 
+  it.each(["active", "escalated", "resolved"] as const)("keeps %s runner recovery in the run log without a card", status => {
+    const node = render(<IssueRecoveryActionCard action={buildAction({
+      kind: "active_run_watchdog", cause: "uncertain_external_action", status, ownerType: "board",
+    })} />);
+    expect(node.textContent).toBe("");
+    expect(node.querySelector("section")).toBeNull();
+  });
+
+  it.each(["active", "escalated"] as const)(
+    "describes a %s board-owned watchdog as a human decision, not a live run",
+    (status) => {
+      const node = render(
+        <IssueRecoveryActionCard
+          action={buildAction({
+            kind: "active_run_watchdog",
+            status,
+            ownerType: "board",
+            ownerAgentId: null,
+            wakePolicy: null,
+          })}
+        />,
+      );
+      expect(node.textContent).toContain(
+        "This recovery needs a human decision. Review the recorded failure and choose the next step.",
+      );
+      expect(node.textContent).not.toContain("The active run has been silent");
+      expect(node.textContent).not.toContain("observing without interrupting");
+      expect(
+        node.querySelector("[data-testid='recovery-action-resolve-trigger']"),
+      ).toBeNull();
+    },
+  );
+
+  it("retains the existing authorized controls for a board-owned watchdog", () => {
+    const onResolve = vi.fn();
+    const node = render(
+      <IssueRecoveryActionCard
+        action={buildAction({
+          kind: "active_run_watchdog",
+          ownerType: "board",
+          ownerAgentId: null,
+          wakePolicy: null,
+        })}
+        onResolve={onResolve}
+      />,
+    );
+    click(
+      node.querySelector("[data-testid='recovery-action-resolve-trigger']"),
+    );
+    expect(document.body.textContent).not.toContain("False positive");
+    click(
+      [...document.body.querySelectorAll("button")].find((button) =>
+        button.textContent?.includes("Try again"),
+      ) ?? null,
+    );
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith("todo");
+  });
+
   it("explains issue_graph_liveness in plain language", () => {
     const node = render(
       <IssueRecoveryActionCard
@@ -999,32 +1057,35 @@ describe("IssueRecoveryActionCard owner-sticky retry lineage", () => {
     expect(node.textContent).not.toContain("Times out");
   });
 
-  it("shows the board escalation without implying the board owns the task", () => {
+  it("shows a current-policy board recovery action without implying the board owns the task", () => {
     const node = render(
       <IssueRecoveryActionCard
         action={buildSourceLaneAction({
-          status: "escalated",
+          status: "active",
           ownerType: "board",
           ownerAgentId: null,
-          evidence: { sourceAttemptCount: 5, sourceMaxAttempts: 5 },
+          evidence: {
+            sourceAttemptCount: 5,
+            sourceMaxAttempts: 5,
+            routingPolicy: "board_escalation_no_takeover_v1",
+          },
           wakePolicy: {
             type: "board_escalation",
-            reason: "recovery_owner_retry_exhausted",
-            attempt: 3,
-            maxAttempts: 3,
+            reason: "unchanged_source_state_exhausted",
             preservesSourceAssignee: true,
           },
-          attemptCount: 3,
-          maxAttempts: 3,
+          attemptCount: 5,
+          maxAttempts: null,
           timeoutAt: null,
         })}
         agentMap={bothAgents}
       />,
     );
     const section = node.querySelector("section[aria-label]");
-    expect(section?.getAttribute("data-recovery-state")).toBe("escalated");
+    expect(section?.getAttribute("data-recovery-state")).toBe("needed");
     expect(section?.getAttribute("data-recovery-lane")).toBe("board");
     expect(node.textContent).toContain("Automatic recovery is exhausted");
+    expect(node.textContent).toContain("Board decision required");
     const recoveryOwner = node.querySelector("[data-testid='recovery-recovery-owner']");
     expect(recoveryOwner?.textContent).toContain("Board");
     expect(recoveryOwner?.textContent).toContain("decides the next step only");

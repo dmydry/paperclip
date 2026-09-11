@@ -2,9 +2,26 @@ import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterExecutionContext, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
 import { runChildProcess } from "@paperclipai/adapter-utils/server-utils";
+
+// Every test in this file needs a real teardown, so the mock below delegates
+// to the actual factory by default. Only the wiring test further down reads
+// the call arguments; it does not change this behavior.
+const mockCreateWorkspaceRestoreTeardown = vi.hoisted(() => vi.fn());
+
+vi.mock("@paperclipai/adapter-utils/workspace-restore-teardown", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  mockCreateWorkspaceRestoreTeardown.mockImplementation(
+    actual.createWorkspaceRestoreTeardown as (...args: unknown[]) => unknown,
+  );
+  return {
+    ...actual,
+    createWorkspaceRestoreTeardown: mockCreateWorkspaceRestoreTeardown,
+  };
+});
+
 import {
   buildCodexAcpConfig,
   createCodexAcpExecutor,
@@ -272,12 +289,12 @@ function buildContext(root: string, overrides: Partial<AdapterExecutionContext> 
 }
 
 describe("codex_local ACP lane", () => {
-  it("defaults to ACP when prerequisites pass and falls back to CLI only for auto resolution", async () => {
+  it("keeps ACP selected and reports unavailable prerequisites for default and explicit engines", async () => {
     const root = await makeTempRoot("paperclip-codex-acp-default-");
     const commandPath = path.join(root, "bin", "codex-acp");
     await fs.mkdir(path.dirname(commandPath), { recursive: true });
     await fs.writeFile(commandPath, "#!/usr/bin/env sh\n", "utf8");
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
 
     expect(resolveCodexExecutionEngine({})).toEqual({ engine: "acp", explicit: false });
     await expect(
@@ -297,51 +314,51 @@ describe("codex_local ACP lane", () => {
       explicit: true,
     });
 
-    setNodeVersion("v22.12.0");
+    setNodeVersion("v24.10.0");
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { agentCommand: commandPath },
         executionTarget: null,
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("Node"),
+      unavailableReason: expect.stringContaining("Node"),
     });
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { engine: "acp", agentCommand: "/missing/codex-acp" },
         executionTarget: null,
       }),
-    ).resolves.toEqual({ engine: "acp", explicit: true });
+    ).resolves.toMatchObject({ engine: "acp", explicit: true, unavailableReason: expect.stringContaining("Node") });
   });
 
-  it("selects the confined CLI lane for local filesystem or network scope", async () => {
+  it("requires explicit CLI selection for local filesystem or network scope", async () => {
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { filesystemScope: "workspace" },
         executionTarget: null,
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("spawn-level confinement"),
+      unavailableReason: expect.stringContaining("confinement"),
     });
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { engine: "acp", filesystemScope: "workspace" },
         executionTarget: null,
       }),
-    ).rejects.toThrow("ACP confinement is not supported");
+    ).resolves.toMatchObject({ engine: "acp", unavailableReason: expect.stringContaining("ACP confinement is not supported") });
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { networkScope: "allowlist" },
         executionTarget: null,
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("network scope"),
+      unavailableReason: expect.stringContaining("confinement"),
     });
     await expect(
       resolveCodexExecutionEngineForRun({
@@ -351,7 +368,7 @@ describe("codex_local ACP lane", () => {
     ).rejects.toThrow('filesystemScope must be "workspace"');
   });
 
-  it("selects the CLI lane for in-place realization and rejects explicitly required ACP", async () => {
+  it("requires explicit CLI selection for in-place realization", async () => {
     const executionTarget = {
       kind: "remote" as const,
       transport: "sandbox" as const,
@@ -366,17 +383,17 @@ describe("codex_local ACP lane", () => {
     await expect(
       resolveCodexExecutionEngineForRun({ config: {}, executionTarget }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("without ACP archive staging"),
+      unavailableReason: expect.stringContaining("ACP archive staging"),
     });
     await expect(
       resolveCodexExecutionEngineForRun({ config: { engine: "acp" }, executionTarget }),
-    ).rejects.toThrow("In-place workspace realization requires the Codex CLI engine");
+    ).resolves.toMatchObject({ engine: "acp", unavailableReason: expect.stringContaining("In-place workspace realization requires the Codex CLI engine") });
   });
 
   it("uses ACP for bridged sandbox auto runs when the ACP command is configured as a shell command", async () => {
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
     await expect(
       resolveCodexExecutionEngineForRun({
         config: { agentCommand: "codex-acp" },
@@ -401,8 +418,8 @@ describe("codex_local ACP lane", () => {
     ).resolves.toEqual({ engine: "acp", explicit: false });
   });
 
-  it("falls back to the CLI lane for one-shot sandbox auto runs", async () => {
-    setNodeVersion("v22.13.0");
+  it("reports unavailable ACP for one-shot sandbox auto runs", async () => {
+    setNodeVersion("v24.11.0");
     await expect(
       resolveCodexExecutionEngineForRun({
         config: {},
@@ -414,14 +431,14 @@ describe("codex_local ACP lane", () => {
         },
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("bidirectional remote process"),
+      unavailableReason: expect.stringContaining("bidirectional remote process"),
     });
   });
 
-  it("falls back to the CLI lane for non-sandbox remote auto runs", async () => {
-    setNodeVersion("v22.13.0");
+  it("reports unavailable ACP for non-sandbox remote auto runs", async () => {
+    setNodeVersion("v24.11.0");
     await expect(
       resolveCodexExecutionEngineForRun({
         config: {},
@@ -442,9 +459,27 @@ describe("codex_local ACP lane", () => {
         },
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("sandbox remote targets only"),
+      unavailableReason: expect.stringContaining("sandbox remote targets only"),
+    });
+  });
+
+  it("enables workspace networking for ACP without changing other env settings", () => {
+    expect(buildCodexAcpConfig({ env: { CUSTOM: "kept" } })).toMatchObject({
+      env: { CUSTOM: "kept", PAPERCLIP_CODEX_ACP_NETWORK_ACCESS: "true" },
+    });
+  });
+
+  it.each([
+    { env: { PAPERCLIP_CODEX_ACP_NETWORK_ACCESS: "false" } },
+    { extraArgs: ["-c", "sandbox_workspace_write.network_access=false"] },
+    { extraArgs: ["--config=sandbox_workspace_write.network_access=false"] },
+    { args: ["-csandbox_workspace_write.network_access=false"] },
+    { extraArgs: ["-c", "sandbox_workspace_write.network_access=true", "-c", "sandbox_workspace_write.network_access=false"] },
+  ])("preserves explicit ACP network denial %j", (config) => {
+    expect(buildCodexAcpConfig(config)).toMatchObject({
+      env: { PAPERCLIP_CODEX_ACP_NETWORK_ACCESS: "false" },
     });
   });
 
@@ -473,6 +508,19 @@ describe("codex_local ACP lane", () => {
     });
   });
 
+  it("forwards GPT-6 Astra controls to the ACPX Codex target", () => {
+    expect(buildCodexAcpConfig({
+      engine: "acp",
+      model: "gpt-6-astra",
+      modelReasoningEffort: "ultra",
+      fastMode: true,
+    })).toMatchObject({
+      model: "gpt-6-astra",
+      modelReasoningEffort: "ultra",
+      fastMode: true,
+    });
+  });
+
   it("normalizes the legacy bare gpt-5.6 alias to gpt-5.6-sol", () => {
     expect(buildCodexAcpConfig({ engine: "acp", model: "gpt-5.6" })).toMatchObject({
       model: "gpt-5.6-sol",
@@ -480,9 +528,9 @@ describe("codex_local ACP lane", () => {
   });
 
   it("checks the Node version required by the ACPX runtime", () => {
-    setNodeVersion("v22.12.0");
+    setNodeVersion("v24.10.0");
     expect(nodeVersionMeetsCodexAcpMinimum()).toBe(false);
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
     expect(nodeVersionMeetsCodexAcpMinimum()).toBe(true);
   });
 
@@ -491,7 +539,7 @@ describe("codex_local ACP lane", () => {
     const commandPath = path.join(root, "bin", "codex-acp");
     await fs.mkdir(path.dirname(commandPath), { recursive: true });
     await fs.writeFile(commandPath, "#!/usr/bin/env sh\n", "utf8");
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
 
     const result = await testCodexAcpEnvironment({
       adapterType: "codex_local",
@@ -544,7 +592,7 @@ describe("codex_local ACP lane", () => {
     await fs.writeFile(commandPath, "#!/usr/bin/env sh\n", "utf8");
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"OPENAI_API_KEY":"sk-shared"}', "utf8");
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
     process.env.CODEX_HOME = sharedCodexHome;
     delete process.env.OPENAI_API_KEY;
 
@@ -592,7 +640,7 @@ describe("codex_local ACP lane", () => {
     await fs.mkdir(path.dirname(commandPath), { recursive: true });
     await fs.writeFile(commandPath, "#!/usr/bin/env sh\n", "utf8");
     await fs.mkdir(sharedCodexHome, { recursive: true });
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
     process.env.CODEX_HOME = sharedCodexHome;
     delete process.env.OPENAI_API_KEY;
 
@@ -633,7 +681,7 @@ describe("codex_local ACP lane", () => {
       "codex-home",
     );
     await fs.mkdir(sharedCodexHome, { recursive: true });
-    setNodeVersion("v22.13.0");
+    setNodeVersion("v24.11.0");
     process.env.CODEX_HOME = sharedCodexHome;
     delete process.env.OPENAI_API_KEY;
 
@@ -1137,8 +1185,61 @@ describe("codex_local ACP lane", () => {
     expect(hostAuth.tokens.refresh_token).toBe("ref-sandbox-newer");
   });
 
-  it("falls back to the CLI lane for a runner-less sandbox even when the ACP command is set", async () => {
-    setNodeVersion("v22.13.0");
+  it("passes the Codex-specific teardown messages to the shared workspace-restore-teardown factory", async () => {
+    // Wiring test only: `createWorkspaceRestoreTeardown` owns the
+    // classify-and-redact contract, proven once for all three adapters by its
+    // own table-driven test in `packages/adapter-utils`. This test proves only
+    // that the Codex adapter passes its own two message strings to it.
+    // Clear the shared, hoisted mock first: earlier tests in this file also
+    // call through it, and a leftover call could hide a real wiring bug.
+    mockCreateWorkspaceRestoreTeardown.mockClear();
+    const root = await makeTempRoot("paperclip-codex-acp-teardown-wiring-");
+    const localCwd = path.join(root, "worktree");
+    const remoteCwd = path.join(root, "remote-workspace");
+    await fs.mkdir(localCwd, { recursive: true });
+    await fs.mkdir(remoteCwd, { recursive: true });
+
+    const execute = createCodexAcpExecutor({
+      createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never,
+      stagedRuntimes: new Map(),
+      stagingLocks: new Map(),
+    });
+    const result = await execute(
+      buildContext(localCwd, {
+        config: {
+          engine: "acp",
+          cwd: localCwd,
+          agentCommand: "node ./fake-acp.js",
+          stateDir: path.join(root, "state"),
+          env: { CODEX_HOME: path.join(root, "codex-home") },
+          promptTemplate: "Do the assigned work.",
+        },
+        context: {
+          issueId: "issue-1",
+          paperclipWorkspace: { cwd: localCwd, source: "project_workspace", workspaceId: "workspace-1" },
+        },
+        executionTarget: {
+          kind: "remote",
+          transport: "sandbox",
+          providerKey: "fake-plugin",
+          remoteCwd,
+          runner: createLocalSandboxRunner(),
+        } as never,
+        authToken: "real-run-jwt",
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(mockCreateWorkspaceRestoreTeardown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startMessage: "[paperclip] Restoring workspace changes and Codex auth from the sandbox.\n",
+        failurePrefix: "[paperclip] Codex ACP teardown restore/copy-back failed",
+      }),
+    );
+  });
+
+  it("reports unavailable ACP for a runner-less sandbox even when the ACP command is set", async () => {
+    setNodeVersion("v24.11.0");
     // Isolate the missing bidirectional runner as the sole fallback cause:
     // provide a valid ACP command and Node version so the only difference from
     // the runner-backed ACP case is the absent `runner`.
@@ -1153,9 +1254,9 @@ describe("codex_local ACP lane", () => {
         },
       }),
     ).resolves.toMatchObject({
-      engine: "cli",
+      engine: "acp",
       explicit: false,
-      fallbackReason: expect.stringContaining("bidirectional remote process"),
+      unavailableReason: expect.stringContaining("bidirectional remote process"),
     });
   });
 

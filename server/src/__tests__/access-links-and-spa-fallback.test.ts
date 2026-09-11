@@ -16,7 +16,9 @@ function buildReq(host: string): Request {
   } as unknown as Request;
 }
 
-const uiDistDir = path.resolve(process.cwd(), "ui/dist");
+// Exercise the first static-UI location selected by createApp, including after
+// prepare:ui-dist has materialized a real build. Restore its index after each test.
+const uiDistDir = path.resolve(import.meta.dirname, "../../ui-dist");
 let createdUiDist = false;
 let originalIndexHtml: string | null = null;
 

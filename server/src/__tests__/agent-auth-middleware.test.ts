@@ -102,6 +102,9 @@ function createApp(db: any, deploymentMode: "authenticated" | "local_trusted" = 
   app.get("/actor", (req, res) => {
     res.json(req.actor);
   });
+  app.post("/mcp/gateways/:gatewayPublicId", (req, res) => {
+    res.json({ reachedGatewayProtocol: true, ...req.actor });
+  });
   app.get("/companies/:companyId/protected", (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
     res.json({ ok: true });
@@ -113,9 +116,6 @@ function createApp(db: any, deploymentMode: "authenticated" | "local_trusted" = 
   app.patch("/companies/:companyId/issues/:issueId", (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
     res.json({ id: req.params.issueId, writable: true });
-  });
-  app.post("/mcp/gateways/:gatewayPublicId", (req, res) => {
-    res.json(req.actor);
   });
   app.post("/api/tool-gateway/gateways/:gatewayId/mcp", (req, res) => {
     res.json(req.actor);
@@ -209,8 +209,36 @@ describe("agent auth middleware", () => {
     expect(commentWrites).toBe(0);
   });
 
+  it("leaves public MCP gateway bearers for the gateway protocol to validate", async () => {
+    const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
+    const publicId = `gw_${"a".repeat(32)}`;
+
+    const res = await request(createApp(db, "local_trusted"))
+      .post(`/mcp/gateways/${publicId}`)
+      .set("Authorization", "Bearer pcgw_runtime_token")
+      .send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ reachedGatewayProtocol: true });
+  });
+
   it.each([
-    "/mcp/gateways/gw_1234567890abcdef",
+    "/mcp/gateways/not-a-public-id",
+    "/api/tool-gateway/gateways/not-a-gateway-id/mcp",
+  ])("does not bypass actor authentication for lookalike MCP gateway path %s", async (path) => {
+    const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
+
+    const res = await request(createApp(db, "local_trusted"))
+      .post(path)
+      .set("Authorization", "Bearer pcgw_runtime_token")
+      .send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain("Agent token did not verify");
+  });
+
+  it.each([
+    `/mcp/gateways/gw_${"a".repeat(32)}`,
     `/api/tool-gateway/gateways/${randomUUID()}/mcp`,
   ])("leaves %s Bearer authentication to the named MCP gateway", async (path) => {
     const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
