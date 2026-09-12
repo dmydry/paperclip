@@ -505,6 +505,14 @@ the optional `PAPERCLIP_WAKE_PAYLOAD_JSON` convenience copy. When that JSON
 exceeds 64 KiB in UTF-8, the environment copy is omitted to avoid operating
 system spawn limits; the complete authorized prompt context (or verified
 session delta) remains intact. Absence of that variable is not missing context.
+Large continuation histories use a bounded inline body view (256,000 serialized
+characters), because Codex ACP rejects inputs above 1,048,576 characters. Exact
+wake requests and latest user direction get priority; omitted bodies retain their
+comment IDs, authorship and trust metadata with `bodyOmitted: true`. The prompt
+explicitly marks incomplete inline coverage and points to the authenticated
+single-comment API. Durable history, decisions and completed-action evidence are
+not deleted or rewritten. Agents fetch necessary source bodies progressively,
+rather than recreating decisions or requesting another approval.
 A verified local `spawn E2BIG` before any provider process exists is a bootstrap
 failure, not evidence of partially executed agent work. Other handshake failures
 retain the normal reconciliation gate.
