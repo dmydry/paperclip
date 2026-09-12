@@ -40,3 +40,30 @@ it("retains the hold until the provider actually acknowledges cancellation", () 
     ...stopped.resultJson, executionCancellation: { state: "requested" },
   } })).toBe(true);
 });
+
+const gated = {
+  runtimeMode: "legacy", status: "cancelled", errorCode: "issue_continuation_waiting_on_review",
+  resultJson: {
+    stopReason: "issue_continuation_waiting_on_review", timeoutSource: "stale_queued_run_gate",
+    executionRecovery: { kind: "pre_dispatch", source: "stale_queued_run_gate", providerWorkStarted: false },
+  },
+};
+
+it("does not turn a proven pre-dispatch gate into an ambiguous provider interruption", () => {
+  expect(legacyExecutionNeedsReconciliation(gated)).toBe(false);
+});
+
+it.each([
+  { kind: "bootstrap_unknown" }, { source: "adapter" }, { providerWorkStarted: true },
+])("keeps unknown or started work guarded despite a gate error code: %j", (missing) => {
+  expect(legacyExecutionNeedsReconciliation({ ...gated, resultJson: {
+    ...gated.resultJson, executionRecovery: { ...gated.resultJson.executionRecovery, ...missing },
+  } })).toBe(true);
+});
+
+it("does not infer safe cancellation from a name, absent start timestamp, or inconsistent result", () => {
+  expect(legacyExecutionNeedsReconciliation({ ...gated, resultJson: {} })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...gated, status: "failed" })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...gated, errorCode: "provider_failed" })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...gated, scheduledRetryAttempt: 1 })).toBe(true);
+});

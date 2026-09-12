@@ -1729,6 +1729,45 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     };
   }
 
+  it("reconciles multiple stopped attempts into one continuation without bypassing an older hold", async () => {
+    const { action, heartbeat, companyId, coderId, sourceIssueId } = await seedReconciledDelivery();
+    const runId = randomUUID();
+    await seedHeartbeatRun({ companyId, agentId: coderId, runId, issueId: sourceIssueId, status: "cancelled" });
+    const [held] = await db.insert(issueRecoveryActions).values({
+      companyId, sourceIssueId, kind: "active_run_watchdog", status: "resolved", outcome: "blocked",
+      ownerType: "board", returnOwnerAgentId: coderId, cause: "legacy_execution_requires_reconciliation",
+      fingerprint: runId, nextAction: "Reconcile the stopped run",
+      evidence: { runId, automaticRecovery: { replay: "blocked", actionOutcome: "unknown" } },
+    }).returning();
+    await deliverReconciledExecutions(db, heartbeat.wakeup);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toHaveLength(0);
+    const body = { actionId: held!.id, outcome: "restored", sourceIssueStatus: "todo",
+      executionReconciliation: { runId, providerStopped: true, actionOutcome: "not_performed",
+        outcomeEvidence: "The server dispatch gate cancelled this run before any provider process started." } };
+    await request(createApp()).post(`/api/issues/${sourceIssueId}/recovery-actions/resolve`).send(body).expect(200);
+    const [prior] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, action.id));
+    expect(prior!.evidence).toMatchObject({
+      executionReconciliation: action.evidence.executionReconciliation,
+      continuationDelivery: "invalidated", continuationSupersededByActionId: held!.id,
+    });
+    // A sweeper that captured the older pending action before the new decision
+    // must also be denied by real issue-locked wake admission.
+    expect(await heartbeat.wakeup(coderId, {
+      source: "automation", triggerDetail: "system", reason: "issue_recovery_action_restored",
+      idempotencyKey: `execution-reconciliation:${action.id}`,
+      payload: { issueId: sourceIssueId, recoveryActionId: action.id },
+      requestedByActorType: "system", requestedByActorId: "execution-recovery",
+      contextSnapshot: { issueId: sourceIssueId, recoveryActionId: action.id,
+        previousRunId: action.evidence.runId, retryOfRunId: action.evidence.runId,
+        source: "execution.reconciled", forceFreshSession: true },
+    })).toBeNull();
+    await Promise.all([deliverReconciledExecutions(db, heartbeat.wakeup), deliverReconciledExecutions(db, heartbeat.wakeup)]);
+    await deliverReconciledExecutions(db, heartbeat.wakeup);
+    const wakes = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0]!.idempotencyKey).toBe(`execution-reconciliation:${held!.id}`);
+  });
+
   it("delivers a reconciled execution once across concurrent sweeps without a deferred duplicate", async () => {
     const { action, heartbeat } = await seedReconciledDelivery();
     let entered = 0;

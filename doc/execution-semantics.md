@@ -144,6 +144,13 @@ The active-lock lifecycle is part of the checkout contract:
 
 Stale-lock recovery is crash recovery, not a retry loop. Paperclip must not clear or adopt locks held by non-terminal runs. After stale cleanup, a checkout `409` should mean a real live owner, status/assignee mismatch, unresolved blocker, or active gate still prevents checkout. Agents must treat that `409` as an ownership conflict and stop rather than retrying the same checkout.
 
+A stale-run cancellation committed by the pre-dispatch gate records that no
+provider work started. A newly queued or claimed run parked for review must not
+be reclassified as an ambiguous legacy interruption. This evidence belongs only
+to that turn: the gate preserves prior execution evidence on reused retry rows,
+and it does not clear another run's reconciliation hold. Historical cancellations
+without that evidence still require explicit outcome reconciliation.
+
 ### Pre-dispatch configuration validation
 
 Pre-dispatch configuration validation is a distinct gate that runs after ownership and checkout are resolved but before the control plane actually dispatches a run.
@@ -324,6 +331,19 @@ This rule is intentionally conservative: local watcher evidence can help the rec
 Issue-thread comments and document-scoped comments have different wake semantics.
 
 A top-level issue comment created by a board user or other user on an agent-assigned, non-terminal issue may wake that issue's assignee. This is the normal "the owner should see new issue-thread feedback" path, and the wake payload should identify the issue comment that caused the wake when possible.
+
+An effective execution-reconciliation blocker also suppresses implicit comment
+reopening and source-issue wakes, including comments submitted with board API
+credentials and blockers whose automatic recovery record is already resolved.
+The comment remains available as evidence. Explicit `resume` or `reopen` requests
+must use the outcome-reconciliation API first; comment text and presentation do
+not prove whether earlier actions happened. The comment routes re-read the hold
+before enqueueing to account for recovery changes after the comment was saved.
+When several stopped attempts have effective holds, each outcome must be
+reconciled before a successor is admitted. A newer outcome decision supersedes
+older undelivered continuations on the same issue while preserving their outcome
+records; the final decision delivers one continuation through the existing
+issue-locked, idempotent wake path.
 
 Issue document comments, document annotation comments, and document review comments do not wake the issue assignee by default. They remain visible as document activity and should be discoverable from the issue's document/review surfaces, but document activity is not itself an issue execution path. A document comment can provide evidence or context for the next run, but it must not be treated as a queued wake, monitor, approval, interaction response, blocker, or terminal disposition.
 

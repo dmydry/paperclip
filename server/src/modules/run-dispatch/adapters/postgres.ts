@@ -804,6 +804,17 @@ export function createPostgresRunDispatchAdapter(
             timeoutConfigured: false,
             timeoutSource: "stale_queued_run_gate",
             timeoutFired: false,
+            // This gate owns the run before adapter dispatch (including the
+            // claimed `running` state). No provider work started for this turn.
+            // A scheduled retry can reuse a previously executed run. Do not
+            // overwrite its outcome evidence with this turn's gate decision.
+            ...(Object.keys(parseObject(run.resultJson)).length === 0 && run.scheduledRetryAttempt === 0
+              ? { executionRecovery: {
+                  kind: "pre_dispatch",
+                  source: "stale_queued_run_gate",
+                  providerWorkStarted: false,
+                } }
+              : {}),
           },
           updatedAt: now,
         })

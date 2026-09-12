@@ -3,6 +3,9 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "../errors.js";
 
+const mockGetExecutionBlocker = vi.hoisted(() => vi.fn());
+vi.mock("../services/execution-blocker.js", () => ({ getExecutionBlocker: mockGetExecutionBlocker }));
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdForUpdate: vi.fn(),
@@ -316,6 +319,7 @@ async function waitForWakeup(assertion: () => void) {
 describe.sequential("issue comment reopen routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetExecutionBlocker.mockReset().mockResolvedValue(null);
     mockIssueService.getById.mockReset();
     mockIssueService.getByIdForUpdate.mockReset();
     mockIssueService.assertCheckoutOwner.mockReset();
@@ -1140,6 +1144,55 @@ describe.sequential("issue comment reopen routes", () => {
         }),
       }),
     ));
+  });
+
+  describe.each(["post", "patch"] as const)("%s comments under an execution hold", (method) => {
+    const blocker = {
+      recoveryActionId: "recovery-1", runId: "stopped-run",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      cause: "legacy_execution_requires_reconciliation", nextAction: "Reconcile outcomes",
+    };
+    async function comment(body: string, extra: Record<string, unknown> = {}) {
+      const client = request(await installActor(createApp()));
+      return method === "post"
+        ? client.post("/api/issues/11111111-1111-4111-8111-111111111111/comments").send({ body, ...extra })
+        : client.patch("/api/issues/11111111-1111-4111-8111-111111111111").send({ comment: body, ...extra });
+    }
+    beforeEach(() => {
+      const issue = makeIssue("blocked");
+      mockIssueService.getById.mockResolvedValue(issue);
+      mockIssueService.update.mockImplementation(async (_id, patch) => makeIssueUpdateReceipt(issue, patch));
+      // Resolved automatic no-replay actions are absent from the active-action
+      // API but still surface through the execution-blocker projection.
+      mockGetExecutionBlocker.mockResolvedValue(blocker);
+    });
+
+    it("preserves repeated board-authenticated monitor evidence without reopening or waking", async () => {
+      for (let wave = 0; wave < 3; wave++) {
+        const res = await comment(`PR review feedback wave ${wave}`);
+        expect(res.status).toBe(method === "post" ? 201 : 200);
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(mockIssueService.addComment).toHaveBeenCalledTimes(3);
+      expect(mockIssueService.update.mock.calls.every(([, patch]) => patch.status !== "todo")).toBe(true);
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    });
+
+    it.each([{ resume: true }, { reopen: true }])("requires outcome reconciliation before explicit continuation %j", async (extra) => {
+      const res = await comment("Continue after review", extra);
+      expect(res.status).toBe(409);
+      expect(res.body.details.code).toBe("execution_reconciliation_required");
+      expect(mockIssueService.addComment).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    });
+
+    it("rechecks a hold installed after the comment was persisted before queuing a wake", async () => {
+      mockIssueService.getById.mockResolvedValue(makeIssue("in_progress"));
+      mockGetExecutionBlocker.mockResolvedValueOnce(null).mockResolvedValue(blocker);
+      expect((await comment("New review feedback")).status).toBe(method === "post" ? 201 : 200);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    });
   });
 
   it("moves assigned blocked issues back to todo via POST comments", async () => {

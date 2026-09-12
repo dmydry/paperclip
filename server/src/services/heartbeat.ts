@@ -25806,6 +25806,10 @@ export function heartbeatService(
             }
             if (action.evidence.continuationDelivery !== "pending")
               return { kind: "skipped" as const };
+            // A decision for one stopped run cannot clear another run's hold.
+            // Keep the outbox pending until all source outcomes are reconciled.
+            if (await getExecutionBlocker(tx as unknown as Db, issue.companyId, issue.id))
+              return { kind: "deferred" as const };
             reconciledSourceRunId = sourceRunId;
           }
 

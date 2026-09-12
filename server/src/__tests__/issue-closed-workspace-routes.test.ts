@@ -51,6 +51,7 @@ const mockRunnerGoalService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 function registerServiceMocks() {
+  vi.doMock("../services/execution-blocker.js", () => ({ getExecutionBlocker: vi.fn(async () => null) }));
   vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
 
   vi.doMock("@paperclipai/shared/telemetry", () => ({

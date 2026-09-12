@@ -12833,7 +12833,17 @@ export function issueRoutes(
           actorType: actor.actorType,
           actorId: actor.actorId,
         });
+      const commentExecutionBlocker = commentBody
+        ? await getExecutionBlocker(db, existing.companyId, existing.id)
+        : null;
+      if (commentExecutionBlocker && (explicitMoveToTodoRequested ||
+          updateFields.status === "todo" || updateFields.status === "in_progress")) {
+        throw conflict("Reconcile the stopped execution before continuing this issue.", {
+          code: "execution_reconciliation_required", executionBlocker: commentExecutionBlocker,
+        });
+      }
       const effectiveMoveToTodoRequested =
+        !commentExecutionBlocker &&
         !assigneeSelfCommentOnTerminal &&
         (explicitMoveToTodoRequested ||
           (!!commentBody &&
@@ -14329,6 +14339,11 @@ export function issueRoutes(
           getDependencyReadiness?: typeof svc.getDependencyReadiness;
         };
         const dependencyReadinessSvc = svc as DependencyReadinessProvider;
+        // Re-read after committing the comment. Evidence cannot authorize a
+        // successor while an execution hold remains, even under board API auth.
+        const commentWakeBlocker = commentBody
+          ? await getExecutionBlocker(db, issue.companyId, issue.id)
+          : null;
         const wakeups = new Map<
           string,
           { agentId: string; wakeup: WakeupRequest }
@@ -14340,6 +14355,7 @@ export function issueRoutes(
             typeof wakeup.payload.issueId === "string"
               ? wakeup.payload.issueId
               : issue.id;
+          if (commentWakeBlocker && wakeIssueId === issue.id) return;
           wakeups.set(`${agentId}:${wakeIssueId}`, { agentId, wakeup });
         };
         const addDependencyResolvedWakeup = async (input: {
@@ -17100,7 +17116,14 @@ export function issueRoutes(
           actorType: actor.actorType,
           actorId: actor.actorId,
         });
+      const commentExecutionBlocker = await getExecutionBlocker(db, issue.companyId, issue.id);
+      if (commentExecutionBlocker && explicitMoveToTodoRequested) {
+        throw conflict("Reconcile the stopped execution before continuing this issue.", {
+          code: "execution_reconciliation_required", executionBlocker: commentExecutionBlocker,
+        });
+      }
       const effectiveMoveToTodoRequested =
+        !commentExecutionBlocker &&
         !assigneeSelfCommentOnTerminal &&
         (explicitMoveToTodoRequested ||
           shouldImplicitlyMoveCommentedIssueToTodo({
@@ -17181,7 +17204,7 @@ export function issueRoutes(
         finalIssueStatus: () => currentIssue.status,
       });
       let issueBeforeCommentDecision = issue;
-      const autoReturnToTodo = shouldAutoReturnIssueToTodoFromComment({
+      const autoReturnToTodo = !commentExecutionBlocker && shouldAutoReturnIssueToTodoFromComment({
         issueStatus: issue.status, issueAssigneeAgentId: issue.assigneeAgentId,
         actorType: actor.actorType, actorAgentId: actor.agentId, body: req.body.body,
       });
@@ -17667,6 +17690,7 @@ export function issueRoutes(
         type WakeupRequest = NonNullable<
           Parameters<typeof heartbeat.wakeup>[1]
         >;
+        const commentWakeBlocker = await getExecutionBlocker(db, currentIssue.companyId, currentIssue.id);
         const wakeups = new Map<
           string,
           { agentId: string; wakeup: WakeupRequest }
@@ -17678,6 +17702,7 @@ export function issueRoutes(
             typeof wakeup.payload.issueId === "string"
               ? wakeup.payload.issueId
               : currentIssue.id;
+          if (commentWakeBlocker && wakeIssueId === currentIssue.id) return;
           const key = `${agentId}:${wakeIssueId}`;
           if (wakeups.has(key)) return;
           wakeups.set(key, { agentId, wakeup });

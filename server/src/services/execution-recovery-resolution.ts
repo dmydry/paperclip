@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { persistActivity } from "./activity-log.js";
 import { appendHeartbeatRunEvent } from "./heartbeat-run-events.js";
 import { logger } from "../middleware/logger.js";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import {
   chatActions,
   environmentLeases,
@@ -190,6 +190,23 @@ export async function markExecutionReconciliation(
         eq(issueRecoveryActions.id, action.id),
       ),
     );
+  // The route holds the source issue lock, also used by wake admission. Several
+  // stopped attempts may need separate outcome decisions, but their undelivered
+  // continuations must not become a queue of duplicate source-work turns.
+  // Preserve every outcome and retire only pending deliveries, never live work.
+  await db.update(issueRecoveryActions).set({
+    evidence: sql`${issueRecoveryActions.evidence} || ${JSON.stringify({
+      continuationDelivery: "invalidated",
+      continuationSupersededByActionId: action.id,
+    })}::jsonb`,
+  }).where(and(
+    eq(issueRecoveryActions.companyId, action.companyId),
+    eq(issueRecoveryActions.sourceIssueId, action.sourceIssueId),
+    ne(issueRecoveryActions.id, action.id),
+    eq(issueRecoveryActions.status, "resolved"),
+    sql`${issueRecoveryActions.evidence}->>'continuationDelivery' = 'pending'`,
+    sql`${issueRecoveryActions.evidence}->'executionReconciliation' is not null`,
+  ));
 }
 
 export async function deliverReconciledExecutions(

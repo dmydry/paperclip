@@ -22,6 +22,14 @@ export function legacyExecutionNeedsReconciliation(
   if (normalizeMaxTurnStopReason(run.resultJson?.stopReason) ?? normalizeMaxTurnStopReason(run.errorCode)) return false;
   const evidence = run.resultJson?.executionRecovery as
     Record<string, unknown> | undefined;
+  // A server-owned dispatch gate cancellation is not an interrupted provider.
+  // It does not reconcile any other run or remove an existing execution hold.
+  if (run.status === "cancelled" && (run.scheduledRetryAttempt ?? 0) === 0
+      && evidence?.kind === "pre_dispatch"
+      && evidence.source === "stale_queued_run_gate"
+      && evidence.providerWorkStarted === false
+      && run.resultJson?.timeoutSource === "stale_queued_run_gate"
+      && run.errorCode != null && run.resultJson?.stopReason === run.errorCode) return false;
   if (run.status === "cancelled" && evidence?.kind === "interrupted"
       && evidence.providerStopped === true && evidence.sessionPreserved === true
       && evidence.actionOutcomes === "settled"

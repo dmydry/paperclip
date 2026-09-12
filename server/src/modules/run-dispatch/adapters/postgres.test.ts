@@ -21,6 +21,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "../../../__tests__/helpers/embedded-postgres.js";
 import { createPostgresRunDispatchAdapter } from "./postgres.js";
+import { legacyExecutionNeedsReconciliation } from "../../../services/legacy-execution-recovery.js";
 import { getExecutionBlocker } from "../../../services/execution-blocker.js";
 
 // Proves the DB-to-facts mapping this adapter owns for each state the two
@@ -596,7 +597,7 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
       15_000,
     );
 
-    it("maps a review-parking continuation summary into a stale queued-run decision", async () => {
+    it.each(["queued", "running"] as const)("parks a %s continuation before dispatch without creating an execution reconciliation failure", async (status) => {
       const { companyId, agentId } = await seedCompanyAndAgent();
       const issueId = randomUUID();
       await seedIssue({ companyId, issueId, status: "in_progress", assigneeAgentId: agentId });
@@ -618,18 +619,32 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
       const runId = await seedRun({
         companyId,
         agentId,
+        status,
         contextSnapshot: {
           issueId,
           wakeReason: "issue_continuation_needed",
           retryReason: "issue_continuation_needed",
         },
       });
+      if (status === "running") {
+        await db.update(heartbeatRuns).set({ startedAt: now }).where(eq(heartbeatRuns.id, runId));
+      }
       const result = await adapter.cancelStaleQueuedRun({
         runId,
         companyId,
-        expectedStatus: "queued",
+        expectedStatus: status,
         now,
       });
+
+      const persisted = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then(rows => rows[0]!);
+      expect(legacyExecutionNeedsReconciliation(persisted)).toBe(false);
+      expect(await getExecutionBlocker(db, companyId, issueId)).toBeNull();
+      // Genuine new feedback is admitted after the wait; the old gate created no hold.
+      const feedbackRunId = await seedRun({ companyId, agentId, contextSnapshot: {
+        issueId, source: "issue.comment", wakeReason: "issue_commented", commentId: randomUUID(),
+      } });
+      expect(await adapter.cancelStaleQueuedRun({ companyId, runId: feedbackRunId, expectedStatus: "queued", now }))
+        .toEqual({ outcome: "not_stale" });
 
       expect(result).toMatchObject({
         outcome: "cancelled",
@@ -758,6 +773,22 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
       15_000,
     );
   });
+  it.each([
+    { scheduledRetryAttempt: 1, resultJson: {} },
+    { scheduledRetryAttempt: 0, resultJson: { executionRecovery: { kind: "interrupted", actionOutcomes: "unknown" } } },
+  ])("preserves prior execution uncertainty when a reused run reaches a dispatch gate: %j", async (prior) => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    await seedIssue({ companyId, issueId, status: "done", assigneeAgentId: agentId });
+    const runId = await seedRun({ companyId, agentId, contextSnapshot: { issueId } });
+    await db.update(heartbeatRuns).set(prior).where(eq(heartbeatRuns.id, runId));
+    expect(await createPostgresRunDispatchAdapter(db).cancelStaleQueuedRun({ companyId, runId, expectedStatus: "queued", now: new Date() }))
+      .toMatchObject({ outcome: "cancelled" });
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(legacyExecutionNeedsReconciliation(persisted!)).toBe(true);
+    expect(persisted!.resultJson?.executionRecovery).toEqual(prior.resultJson.executionRecovery);
+  });
+
   it.each(["active", "resolved"])("blocks a generic retry after %s no-replay disposition", async status => {
     const { companyId, agentId } = await seedCompanyAndAgent();
     const issueId = randomUUID(), runId = randomUUID();
@@ -768,6 +799,9 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
     expect(await getExecutionBlocker(db, randomUUID(), issueId)).toBeNull();
     const adapter = createPostgresRunDispatchAdapter(db);
     await expect(adapter.cancelStaleQueuedRun({ companyId, runId, expectedStatus: "queued", now: new Date() })).resolves.toMatchObject({ outcome: "cancelled", errorCode: "execution_reconciliation_required" });
+    const [cancelled] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(legacyExecutionNeedsReconciliation(cancelled!)).toBe(false);
+    expect(await getExecutionBlocker(db, companyId, issueId)).toMatchObject({ cause: "uncertain_external_action" });
   });
 
   it("links the stopped run's agent instead of its return owner, within the same company", async () => {
