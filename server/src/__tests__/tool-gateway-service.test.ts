@@ -517,6 +517,109 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(await db.select().from(toolCallEvents).where(eq(toolCallEvents.reasonCode, "approved_action_executed"))).toHaveLength(0);
   });
 
+  it.each([false, true])("keeps a long governed call covered until one terminal delivery (provider failure: %s)", async (fails) => {
+    const { company, agent, issue, run } = await createRunFixture(db);
+    const { connection } = await createRemoteMcpToolFixture(db, company.id);
+    await db.update(toolConnections).set({
+      config: { url: "https://8.8.8.8/mcp", approvedExecutionTimeoutMs: 3_700_000 },
+    }).where(eq(toolConnections.id, connection.id));
+    await db.insert(toolPolicies).values({ companyId: company.id, name: "Ask first", policyType: "require_approval", selectors: { connectionId: connection.id } });
+    let finishProvider!: () => void;
+    const providerWait = new Promise<void>((resolve) => { finishProvider = resolve; });
+    let calls = 0;
+    const wakeup = vi.fn(async (agentId: string, input: any) => {
+      return (await db.insert(agentWakeupRequests).values({
+        companyId: company.id, agentId, source: input.source,
+        reason: input.reason, idempotencyKey: input.idempotencyKey, payload: input.payload,
+      }).returning())[0] as any;
+    });
+    const deliveries = toolActionDeliveryService(db, { wakeup });
+    const settled = vi.fn(async () => {});
+    const gateway = createTestToolGatewayService(db, {
+      onToolActionSettled: settled,
+      remoteHttpRequest: async (_url, init) => {
+        const body = JSON.parse(String(init.body));
+        if (body.method === "tools/call") {
+          calls++;
+          await providerWait;
+          if (fails) throw new Error("fixture provider failed");
+        }
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "release completed" }] } }), { headers: { "content-type": "application/json" } });
+      },
+    });
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const tool = (await gateway.listToolsForSession(session.token)).find(t => t.connectionId === connection.id)!;
+    await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "approval_required" });
+    const [request] = await db.select().from(toolActionRequests);
+    await db.update(issues).set({ status: "in_review" }).where(eq(issues.id, issue.id));
+    await db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    expect((await issueService(db).list(company.id))[0].reviewAttention).toMatchObject({
+      state: "covered", paths: [{ kind: "interaction", responder: "Board" }],
+    });
+    const execution = gateway.approveActionRequest({ companyId: company.id, actionRequestId: request.id, actor: { userId: "reviewer" } });
+    try {
+      await vi.waitFor(() => expect(calls).toBe(1));
+      // A connection edit cannot shorten the retained in-flight budget, even
+      // when recovery is reconstructed after a process restart.
+      await db.update(toolConnections).set({ config: { url: "https://8.8.8.8/mcp", approvedExecutionTimeoutMs: 60_000 } }).where(eq(toolConnections.id, connection.id));
+      // Advance wall time without altering the execution claim's CAS identity.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      await createTestToolGatewayService(db).sweepActionReviews();
+      await deliveries.sweepPending();
+      expect((await db.select().from(toolActionRequests))[0].status).toBe("executing");
+      expect(settled).not.toHaveBeenCalled();
+      expect(wakeup).not.toHaveBeenCalled();
+      expect((await issueService(db).list(company.id))[0].reviewAttention).toMatchObject({
+        state: "covered",
+        paths: [{ kind: "interaction", ref: request.interactionId, responder: "Server" }],
+      });
+    } finally {
+      finishProvider();
+      try {
+        await execution;
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(toolActionRequests))[0].status).toBe(fails ? "failed" : "executed");
+    // The outbox remains the waiting path until its terminal result is delivered.
+    expect((await issueService(db).list(company.id))[0].reviewAttention?.state).toBe("covered");
+    await deliveries.sweepPending();
+    await gateway.sweepActionReviews();
+    await deliveries.sweepPending();
+    expect(wakeup).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(1);
+    expect((await issueService(db).list(company.id))[0].reviewAttention).toMatchObject({
+      state: "covered", paths: [{ kind: "queued_wake" }],
+    });
+  });
+
+  it.each([false, true])("expires an orphaned long action after its deadline without replay (retained budget: %s)", async (retainedBudget) => {
+    const { company, agent, run } = await createRunFixture(db);
+    const { connection } = await createRemoteMcpToolFixture(db, company.id);
+    await db.update(toolConnections).set({ config: { url: "https://8.8.8.8/mcp", approvedExecutionTimeoutMs: 3_700_000 } }).where(eq(toolConnections.id, connection.id));
+    await db.insert(toolPolicies).values({ companyId: company.id, name: "Ask first", policyType: "require_approval", selectors: { connectionId: connection.id } });
+    const gateway = createTestToolGatewayService(db);
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const tool = (await gateway.listToolsForSession(session.token)).find(t => t.connectionId === connection.id)!;
+    await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "approval_required" });
+    const [request] = await db.select().from(toolActionRequests);
+    await commitToolActionReview(db, { companyId: company.id, actionRequestId: request.id, decision: "approved", actor: { userId: "reviewer" } });
+    const startedAt = new Date(Date.now() - 63 * 60_000);
+    await db.update(toolActionRequests).set({ status: "executing", updatedAt: startedAt }).where(eq(toolActionRequests.id, request.id));
+    await db.update(toolInvocations).set({ status: "executing", startedAt }).where(eq(toolInvocations.id, request.invocationId));
+    if (retainedBudget) {
+      await db.update(toolInvocations).set({ policyExplanation: { approvedExecutionTimeoutMs: 3_700_000 } }).where(eq(toolInvocations.id, request.invocationId));
+      await db.update(toolConnections).set({ config: { approvedExecutionTimeoutMs: 7_200_000 } }).where(eq(toolConnections.id, connection.id));
+    }
+    const restartedGateway = createTestToolGatewayService(db);
+    await restartedGateway.sweepActionReviews();
+    expect((await db.select().from(toolInvocations))[0]).toMatchObject({ status: "failed", errorCode: "tool_execution_outcome_unknown" });
+    expect(await db.select().from(toolCallEvents).where(eq(toolCallEvents.reasonCode, "approved_action_executed"))).toHaveLength(0);
+  });
+
   it("remembers a read action atomically, allows changed arguments, and preserves explicit denials and definition review", async () => {
     const { company, agent, issue, run } = await createRunFixture(db);
     const [project] = await db.insert(projects).values({ companyId: company.id, name: "Reviewed project" }).returning();

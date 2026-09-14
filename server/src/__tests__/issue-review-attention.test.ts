@@ -11,6 +11,8 @@ import {
   issueRecoveryActions,
   issueThreadInteractions,
   issues,
+  toolActionRequests,
+  toolInvocations,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -54,13 +56,13 @@ describeEmbeddedPostgres("issue review attention", () => {
     await tempDb?.cleanup();
   });
 
-  async function seed() {
+  async function seed(issuePrefix = "RVA") {
     const companyId = randomUUID();
     const agentId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
       name: "Review Attention Co",
-      issuePrefix: "RVA",
+      issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
     await db.insert(agents).values({
@@ -133,6 +135,30 @@ describeEmbeddedPostgres("issue review attention", () => {
       state: "covered",
       paths: [expect.objectContaining({ kind: "queued_wake", responder: "Review Agent" })],
     });
+  });
+
+  it("does not trust a toolAction payload or a foreign-company action as a waiting path", async () => {
+    const { companyId, agentId } = await seed();
+    const issueId = await insertReview({ companyId, agentId, identifier: "RVA-FAKE" });
+    const interactionId = randomUUID();
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId, companyId, issueId, kind: "request_confirmation",
+      status: "accepted", continuationPolicy: "wake_assignee",
+      payload: { version: 1, prompt: "Release?", toolAction: { status: "executing" } },
+      result: { version: 1, outcome: "accepted" },
+    });
+    expect((await svc.list(companyId))[0].reviewAttention?.state).toBe("stalled");
+
+    const foreign = await seed("RVB");
+    const [invocation] = await db.insert(toolInvocations).values({
+      companyId: foreign.companyId, toolName: "release", status: "executing",
+    }).returning();
+    await db.insert(toolActionRequests).values({
+      companyId: foreign.companyId, issueId, interactionId, invocationId: invocation.id,
+      status: "executing", canonicalArgumentsHash: "fixture",
+      canonicalArgumentsSummary: { summary: "{}", sizeBytes: 2, redactedFields: [] },
+    });
+    expect((await svc.list(companyId))[0].reviewAttention?.state).toBe("stalled");
   });
 
   it("reports every healthy review path as covered", async () => {

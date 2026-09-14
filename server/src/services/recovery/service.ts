@@ -49,6 +49,7 @@ import {
   workAssessments,
 } from "@paperclipai/db";
 import { parseObject, asBoolean, asNumber } from "../../adapters/utils.js";
+import { toolActionInteractionCondition, waitingIssueInteractionCondition } from "../issue-interaction-wait.js";
 import { runningProcesses } from "../../adapters/index.js";
 import {
   isNativeRunnerOwnershipHeld,
@@ -1111,7 +1112,7 @@ export function recoveryService(
         and(
           eq(issueThreadInteractions.companyId, companyId),
           eq(issueThreadInteractions.issueId, issueId),
-          eq(issueThreadInteractions.status, "pending"),
+          waitingIssueInteractionCondition(),
           inArray(issueThreadInteractions.continuationPolicy, [
             "wake_assignee",
             "wake_assignee_on_accept",
@@ -1733,6 +1734,9 @@ export function recoveryService(
           eq(issueThreadInteractions.companyId, companyId),
           eq(issueThreadInteractions.issueId, issueId),
           inArray(issueThreadInteractions.status, ["accepted", "answered"]),
+          // Governed outcomes have their own durable, terminal-only delivery.
+          // Generic recovery must not race it, even after execution completes.
+          not(toolActionInteractionCondition()),
           inArray(issueThreadInteractions.continuationPolicy, [
             "wake_assignee",
             "wake_assignee_on_accept",

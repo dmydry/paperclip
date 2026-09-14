@@ -663,6 +663,13 @@ function approvedExecutionTimeoutMsFromConnectionConfig(value: unknown) {
   return approvedExecutionTimeoutMs(asRecord(value)?.approvedExecutionTimeoutMs);
 }
 
+function approvedInvocationExecutionTimeoutMs(policyExplanation: unknown, connectionConfig: unknown) {
+  const retained = asRecord(policyExplanation)?.approvedExecutionTimeoutMs;
+  return typeof retained === "number" && Number.isFinite(retained)
+    ? approvedExecutionTimeoutMs(retained)
+    : approvedExecutionTimeoutMsFromConnectionConfig(connectionConfig);
+}
+
 function sessionTtlMs(value: number | undefined) {
   if (!Number.isFinite(value)) return DEFAULT_SESSION_TTL_MS;
   return Math.max(
@@ -7283,6 +7290,7 @@ export function createToolGatewayService(
           actionRequest: toolActionRequests,
           invocationStatus: toolInvocations.status,
           invocationStartedAt: toolInvocations.startedAt,
+          invocationPolicyExplanation: toolInvocations.policyExplanation,
           connectionConfig: toolConnections.config,
         })
         .from(toolActionRequests)
@@ -7299,7 +7307,7 @@ export function createToolGatewayService(
       const row = match?.actionRequest;
       if (!row || row.status !== "executing") return row ?? null;
       executionWaitMs = Math.max(executionWaitMs,
-        approvedExecutionTimeoutMsFromConnectionConfig(match.connectionConfig) + 5_000);
+        approvedInvocationExecutionTimeoutMs(match.invocationPolicyExplanation, match.connectionConfig) + 5_000);
       deadline = extendApprovedExecutionWaitDeadline({
         currentDeadlineMs: deadline,
         invocationStatus: match.invocationStatus,
@@ -7807,11 +7815,15 @@ export function createToolGatewayService(
     await assertIssueOpenForApprovedAction({ claimed, invocation });
 
     const startedAt = Date.now();
+    const executionTimeoutMs = liveApprovalContext.executionTimeoutMs;
     await db
       .update(toolInvocations)
       .set({
         status: "executing",
         approvalState: "approved",
+        // Retain the dispatch budget alongside the invocation's policy evidence.
+        // Later connection edits must not change this in-flight call's deadline.
+        policyExplanation: sql`coalesce(${toolInvocations.policyExplanation}, '{}'::jsonb) || ${JSON.stringify({ approvedExecutionTimeoutMs: executionTimeoutMs })}::jsonb`,
         startedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -7822,7 +7834,6 @@ export function createToolGatewayService(
     });
 
     try {
-      const executionTimeoutMs = liveApprovalContext.executionTimeoutMs;
       const result =
         tool.providerType === "mcp_remote_http"
           ? (
@@ -9144,8 +9155,21 @@ export function createToolGatewayService(
       let scanned = 0;
       for (;;) {
         const rows = await db
-          .select()
+          .select({
+            request: toolActionRequests,
+            invocationStartedAt: toolInvocations.startedAt,
+            invocationPolicyExplanation: toolInvocations.policyExplanation,
+            connectionConfig: toolConnections.config,
+          })
           .from(toolActionRequests)
+          .innerJoin(toolInvocations, and(
+            eq(toolInvocations.id, toolActionRequests.invocationId),
+            eq(toolInvocations.companyId, toolActionRequests.companyId),
+          ))
+          .leftJoin(toolConnections, and(
+            eq(toolConnections.id, toolInvocations.connectionId),
+            eq(toolConnections.companyId, toolInvocations.companyId),
+          ))
           .where(
             and(
               or(
@@ -9164,7 +9188,16 @@ export function createToolGatewayService(
           )
           .orderBy(asc(toolActionRequests.id))
           .limit(100);
-        for (const row of rows) {
+        for (const { request: row, invocationStartedAt, invocationPolicyExplanation, connectionConfig } of rows) {
+          if (row.status === "executing") {
+            // Ten minutes is an orphan-recovery floor, not a provider deadline.
+            // Long approved calls (e.g. build/publish/deploy) retain their full
+            // execution budget plus time to persist the provider result. On a
+            // restart an orphan still expires without replaying its side effect.
+            const executionDeadline = (invocationStartedAt ?? row.updatedAt).getTime()
+              + approvedInvocationExecutionTimeoutMs(invocationPolicyExplanation, connectionConfig) + 5_000;
+            if (now.getTime() < executionDeadline) continue;
+          }
           if (row.status === "approved") {
             await this.approveActionRequest({
               companyId: row.companyId,
@@ -9218,7 +9251,7 @@ export function createToolGatewayService(
         }
         scanned += rows.length;
         if (rows.length < 100) break;
-        cursor = rows[rows.length - 1].id;
+        cursor = rows[rows.length - 1].request.id;
       }
       return { scanned };
     },

@@ -1,4 +1,5 @@
 import { getExecutionBlocker } from "./execution-blocker.js";
+import { waitingIssueInteractionCondition } from "./issue-interaction-wait.js";
 import {
   legacyExecutionNeedsReconciliation,
   terminalizeLegacyExecution,
@@ -13059,7 +13060,7 @@ export function heartbeatService(
               and(
                 eq(issueThreadInteractions.companyId, issue.companyId),
                 eq(issueThreadInteractions.issueId, issue.id),
-                eq(issueThreadInteractions.status, "pending"),
+                waitingIssueInteractionCondition(),
               ),
             )
             .limit(1)

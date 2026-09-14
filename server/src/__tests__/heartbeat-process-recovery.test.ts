@@ -70,6 +70,9 @@ import {
   statusDecisionEffects,
   statusDecisions,
   toolApplications,
+  toolActionRequests,
+  toolActionDeliveries,
+  toolInvocations,
   toolConnections,
   workAssessments,
   workspaceOperations,
@@ -5126,6 +5129,37 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(configurationComment).toBeTruthy();
   });
 
+  it.each(["in_progress", "in_review"])("does not repair a successful run waiting on governed execution (%s)", async (status) => {
+    const { companyId, agentId, runId, issueId } = await seedQueuedIssueRunFixture();
+    const interactionId = randomUUID();
+    await db.update(issues).set({ status }).where(eq(issues.id, issueId));
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId, companyId, issueId, kind: "request_confirmation",
+      status: "accepted", continuationPolicy: "wake_assignee", resolvedAt: new Date(),
+      payload: { version: 1, prompt: "Release?" }, result: { version: 1, outcome: "accepted" },
+    });
+    const [invocation] = await db.insert(toolInvocations).values({
+      companyId, issueId, agentId, runId, toolName: "release", status: "executing",
+    }).returning();
+    const [action] = await db.insert(toolActionRequests).values({
+      companyId, issueId, invocationId: invocation.id, interactionId, status: "executing",
+      canonicalArgumentsHash: "fixture", canonicalArgumentsSummary: { summary: "{}", sizeBytes: 2, redactedFields: [] },
+    }).returning();
+    const heartbeat = heartbeatService(db);
+    try {
+      await heartbeat.resumeQueuedRuns();
+      await waitForRunToSettle(heartbeat, runId, 5_000);
+      await heartbeat.drainActiveRunExecutions();
+      expect((await heartbeat.getRun(runId))?.status).toBe("succeeded");
+      const wakes = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
+      expect(wakes.filter((wake) => ["issue_review_path_lost", "finish_successful_run_handoff"].includes(wake.reason ?? ""))).toHaveLength(0);
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId))).toHaveLength(1);
+    } finally {
+      await db.delete(toolActionRequests).where(eq(toolActionRequests.id, action.id));
+      await db.delete(toolInvocations).where(eq(toolInvocations.id, invocation.id));
+    }
+  });
+
   it("queues one finish-handoff wake when a successful run leaves in-progress work without a next action", async () => {
     const { companyId, agentId, runId, issueId } =
       await seedQueuedIssueRunFixture();
@@ -8952,6 +8986,39 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       expect(issue?.status).toBe("in_progress");
     },
   );
+
+  it("leaves governed approval, execution and terminal delivery to the gateway without generic recovery wakes", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Governed release", issuePrefix: "GREL", defaultResponsibleUserId: "responsible-user", requireBoardApprovalForNewAgents: false });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Release lead", role: "engineer", status: "idle", adapterType: "codex_local", runtimeConfig: { heartbeat: { wakeOnDemand: true } } });
+    await db.insert(issues).values({ id: issueId, companyId, title: "Release in progress", status: "in_review", assigneeAgentId: agentId, responsibleUserId: "responsible-user" });
+    await db.insert(issueThreadInteractions).values({ id: interactionId, companyId, issueId, kind: "request_confirmation", status: "accepted", continuationPolicy: "wake_assignee", resolvedAt: new Date(), payload: { version: 1, prompt: "Release?" }, result: { outcome: "accepted" } });
+    const [invocation] = await db.insert(toolInvocations).values({ companyId, issueId, agentId, toolName: "release", status: "executing" }).returning();
+    const [action] = await db.insert(toolActionRequests).values({ companyId, issueId, invocationId: invocation.id, interactionId, status: "approved", canonicalArgumentsHash: "fixture", canonicalArgumentsSummary: { summary: "{}", sizeBytes: 2, redactedFields: [] } }).returning();
+    const heartbeat = heartbeatService(db);
+    try {
+      for (const status of ["approved", "executing", "executed"] as const) {
+        await db.update(toolActionRequests).set({ status }).where(eq(toolActionRequests.id, action.id));
+        if (status === "executed") {
+          await db.insert(toolActionDeliveries).values({ companyId, issueId, interactionId, actionRequestId: action.id });
+        }
+        const result = await heartbeat.reconcileStrandedAssignedIssues();
+        expect(result.continuationRequeued).toBe(0);
+        expect(result.escalated).toBe(0);
+        expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId))).toHaveLength(0);
+        expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toHaveLength(0);
+      }
+      // Even after outbox delivery, the accepted card is not a generic recovery source.
+      await db.update(toolActionDeliveries).set({ deliveredAt: new Date() }).where(eq(toolActionDeliveries.actionRequestId, action.id));
+      expect((await heartbeat.reconcileStrandedAssignedIssues()).continuationRequeued).toBe(0);
+    } finally {
+      await db.delete(toolActionRequests).where(eq(toolActionRequests.id, action.id));
+      await db.delete(toolInvocations).where(eq(toolInvocations.id, invocation.id));
+    }
+  });
 
   it("requeues accepted interaction continuations stranded in_review without execution state", async () => {
     const companyId = randomUUID();

@@ -1,4 +1,5 @@
 import { executionProjectionsForRuns } from "./execution-projection.js";
+import { waitingIssueInteractionCondition } from "./issue-interaction-wait.js";
 import type { ExecutionProjection } from "@paperclipai/shared";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
@@ -4676,7 +4677,7 @@ async function listIssueReviewAttentionMap(
       .where(
         and(
           eq(issueThreadInteractions.companyId, companyId),
-          eq(issueThreadInteractions.status, "pending"),
+          waitingIssueInteractionCondition(),
           inArray(issueThreadInteractions.issueId, reviewIds),
         ),
       ),
@@ -4840,6 +4841,13 @@ async function listIssueReviewAttentionMap(
       row.kind,
     ]),
   );
+  const serverOwnedInteractionIds = new Set(
+    // The wait predicate admits resolved interactions only when a linked action
+    // still owns execution or delivery. Unresolved approvals remain Board-owned.
+    (interactionRows as Array<{ id: string; status: string }>)
+      .filter((row) => row.status !== "pending")
+      .map((row) => row.id),
+  );
   const interactionAudienceById = new Map(
     (
       interactionRows as Array<{
@@ -4880,26 +4888,32 @@ async function listIssueReviewAttentionMap(
         })
           ? candidateAgentId
           : null;
+      const serverOwnedAction =
+        path.kind === "interaction" && path.ref && serverOwnedInteractionIds.has(path.ref);
       return {
         kind: path.kind,
-        label: reviewPathLabel(
-          path.kind,
-          path.kind === "interaction" && path.ref
-            ? (interactionKindById.get(path.ref) ?? null)
-            : path.kind === "queued_wake" && path.ref
-              ? (wakeReasonById.get(path.ref) ?? null)
-              : null,
-        ),
-        responder: path.agentId
-          ? (agentNameById.get(path.agentId) ?? path.agentId)
-          : path.userId
-            ? (userNameById.get(path.userId) ?? path.userId)
-            : path.kind === "interaction" && interactionResponderAgentId
-              ? (agentNameById.get(interactionResponderAgentId) ??
-                interactionResponderAgentId)
-              : path.kind === "interaction" || path.kind === "approval"
-                ? "Board"
-                : null,
+        label: serverOwnedAction
+          ? "Connection action or result delivery"
+          : reviewPathLabel(
+              path.kind,
+              path.kind === "interaction" && path.ref
+                ? (interactionKindById.get(path.ref) ?? null)
+                : path.kind === "queued_wake" && path.ref
+                  ? (wakeReasonById.get(path.ref) ?? null)
+                  : null,
+            ),
+        responder: serverOwnedAction
+          ? "Server"
+          : path.agentId
+            ? (agentNameById.get(path.agentId) ?? path.agentId)
+            : path.userId
+              ? (userNameById.get(path.userId) ?? path.userId)
+              : path.kind === "interaction" && interactionResponderAgentId
+                ? (agentNameById.get(interactionResponderAgentId) ??
+                  interactionResponderAgentId)
+                : path.kind === "interaction" || path.kind === "approval"
+                  ? "Board"
+                  : null,
         since: path.since
           ? (path.since instanceof Date
               ? path.since

@@ -59,11 +59,22 @@ outcomes; legacy runners receive the wake context and agent message. Existing
 scheduler eligibility and budget gates still apply. Closed tasks retire receipts;
 reassignment does not deliver the old agent's outcome to another agent.
 
+Accepted approval is not completed execution. An approved/executing action, or
+its undelivered terminal outbox receipt, remains a server-owned waiting path for
+review attention and run-disposition checks. Generic accepted-interaction
+recovery excludes governed cards; the gateway's terminal outbox owns their wake.
+Ordinary accepted confirmations and answered questions retain normal recovery.
+
 Startup and periodic sweeps recover committed approvals, undelivered outcomes,
-expiry, and incomplete feed projections. An execution left in progress for ten
-minutes is marked failed with `tool_execution_outcome_unknown`. Its external
-outcome is uncertain: inspect the provider before retrying. It is never
-automatically replayed. This grace period exceeds the current approved-call timeout.
+expiry, and incomplete feed projections. At dispatch, the bounded
+`approvedExecutionTimeoutMs` is retained on the invocation's policy evidence;
+subsequent connection edits cannot shorten or extend that in-flight budget.
+Older invocations fall back to connection configuration. Recovery waits from
+provider start plus five seconds to persist the result.
+The existing ten-minute orphan grace remains a minimum, not
+a cap on longer provider calls. After both windows expire, a stranded execution
+is marked failed with `tool_execution_outcome_unknown`. Its external outcome is
+uncertain: inspect the provider before retrying. It is never automatically replayed.
 
 Migration 0249 adds the outbox and a partial unique wake-idempotency index.
 The index is built transactionally; migration can briefly block wake-table writes
