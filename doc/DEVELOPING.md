@@ -280,6 +280,23 @@ pnpm test:release-smoke
 
 These browser suites are intended for targeted local verification and CI, not the default agent/human test command.
 
+The stable test runner creates one short `pv-*` temporary root per invocation.
+Successful runs remove that root after the command and its remaining process
+group have stopped. Failed or interrupted runs preserve the fixtures and print
+their path. On Linux the command holds a directory lock so an external janitor
+can skip active fixtures, and process references protect detached test children.
+Windows retains fixtures because process-group teardown cannot be verified.
+A host janitor may remove unlocked abandoned or failed
+fixtures after 24 hours. Logs required for longer retention must be saved outside
+the fixture root. Set `PAPERCLIP_KEEP_TEST_TEMP=1` to keep successful fixtures for
+local diagnosis as well; this does not exempt them from the host retention policy.
+
+Verify this lifecycle without running the application suite:
+
+```sh
+node --test scripts/test-temp-lifecycle.test.mjs
+```
+
 For normal issue work, start with the smallest targeted check that proves the change. Reserve repo-wide typecheck/build/test runs for PR-ready handoff or changes broad enough that narrow checks do not cover the risk.
 
 ### Recent task ordering
