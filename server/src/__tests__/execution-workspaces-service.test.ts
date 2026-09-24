@@ -1820,17 +1820,23 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     const activeRun = await seedTerminalWorkspace({ mergedPr: true, activeRun: true });
     const openDescendant = await seedTerminalWorkspace({ mergedPr: true, childStatus: "todo" });
     const undelivered = await seedTerminalWorkspace();
+    const workspaceIds = [
+      eligible.executionWorkspaceId,
+      activeRun.executionWorkspaceId,
+      openDescendant.executionWorkspaceId,
+      undelivered.executionWorkspaceId,
+    ];
+    // The reaper freezes its scan boundary at the current process time. Give
+    // database-created fixtures an unambiguous timestamp before that boundary.
+    await db.update(executionWorkspaces)
+      .set({ updatedAt: new Date(Date.now() - 1_000) })
+      .where(inArray(executionWorkspaces.id, workspaceIds));
 
     const result = await svc.sweepTerminalWorkspaces();
     const rows = await db
       .select({ id: executionWorkspaces.id, status: executionWorkspaces.status, cleanupEligibleAt: executionWorkspaces.cleanupEligibleAt, cleanupReason: executionWorkspaces.cleanupReason })
       .from(executionWorkspaces)
-      .where(inArray(executionWorkspaces.id, [
-        eligible.executionWorkspaceId,
-        activeRun.executionWorkspaceId,
-        openDescendant.executionWorkspaceId,
-        undelivered.executionWorkspaceId,
-      ]));
+      .where(inArray(executionWorkspaces.id, workspaceIds));
     const byId = new Map(rows.map((row) => [row.id, row]));
 
     expect(result).toMatchObject({ archived: 1, skippedActiveRun: 1, skippedNonTerminalTree: 1, skippedUndelivered: 1 });
