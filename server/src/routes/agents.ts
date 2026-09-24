@@ -2545,7 +2545,8 @@ export function agentRoutes(
   function codexLocalEnvKeyConfigured(value: unknown): boolean {
     if (asEnvBindingString(value)) return true;
     const record = asRecord(value);
-    return record?.type === "secret_ref" && typeof record.secretId === "string";
+    return (record?.type === "secret_ref" && typeof record.secretId === "string") ||
+      (record?.type === "user_secret_ref" && typeof record.key === "string");
   }
 
   // Both Codex adapters keep credentials in a shared auth source but execute in

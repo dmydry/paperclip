@@ -148,7 +148,25 @@ export async function withTestTemp(callback, { instanceId, tempParent } = {}) {
       throw new Error('Test temporary directory identity changed; cleanup refused');
     }
     if (success && descendantsStopped && !hasDetachedReference(root, preexistingProcesses) && process.env.PAPERCLIP_KEEP_TEST_TEMP !== '1') {
-      rmSync(root, { recursive: true });
+      // A just-exited test worker can leave a final async fixture write racing
+      // recursive removal. Retry the whole tree, then retain it for inspection
+      // rather than turn a passing suite into a cleanup failure.
+      let removed = false;
+      for (let attempt = 0; attempt < 3 && !removed; attempt++) {
+        try {
+          rmSync(root, { recursive: true, maxRetries: 10, retryDelay: 100 });
+          removed = true;
+        } catch (error) {
+          if (error.code !== 'ENOTEMPTY') throw error;
+          if (attempt < 2) await delay(100);
+        }
+      }
+      if (!removed) {
+        marker.state = 'retained';
+        marker.finished_at = Math.floor(Date.now() / 1000);
+        saveMarker();
+        console.error(`[test:run] Retained temporary fixtures after cleanup race: ${root}`);
+      }
     } else {
       marker.state = success ? 'retained' : 'failed';
       marker.finished_at = Math.floor(Date.now() / 1000);

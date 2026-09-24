@@ -418,7 +418,7 @@ describeEmbeddedPostgres("hired agent provider credential inheritance", () => {
     expect(codexHome?.value.length ?? 0).toBeGreaterThan(0);
   });
 
-  it("keeps the shared company Codex home when the child inherits no key", async () => {
+  it("isolates the child Codex home even when the child inherits no key", async () => {
     const companyId = await seedCompany();
     const parent = await seedParentAgent(companyId, "codex_local", {});
 
@@ -429,7 +429,9 @@ describeEmbeddedPostgres("hired agent provider credential inheritance", () => {
     });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(childEnvOf(res).CODEX_HOME).toBeUndefined();
+    const codexHome = childEnvOf(res).CODEX_HOME as { type: string; value: string } | undefined;
+    expect(codexHome?.type).toBe("plain");
+    expect(codexHome?.value).toContain(path.join("companies", companyId, "agents", res.body.agent.id, "codex-home"));
   });
 
   it("adds no home override for a grok_local child with no inherited key", async () => {

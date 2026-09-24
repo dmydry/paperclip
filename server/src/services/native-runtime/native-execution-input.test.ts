@@ -517,7 +517,7 @@ describe("follow-up context size", () => {
     expect(resumed).not.toContain("PREVIOUS_TASK_TEXT");
     expect(resumed.split(newBody)).toHaveLength(2);
     expect(resumed.split(answerText)).toHaveLength(2);
-    expect(resumed).toContain("earlier history remains in this session");
+    expect(resumed).toContain("Earlier delivered history remains in this resumed session.");
     expect(JSON.stringify(contract)).not.toContain(oldBody);
     expect(JSON.stringify(contract)).not.toContain(answerText);
     expect(resumed.length + JSON.stringify(contract).length).toBeLessThan(fresh.length);
