@@ -2254,7 +2254,8 @@ function renderPaperclipWakePromptBody(
   const executionStage = normalized.executionStage;
   const recovery = normalized.recovery;
   const recoveryScoped = Boolean(
-    recovery || normalized.reason === "source_scoped_recovery_action",
+    normalized.reason !== "issue_recovery_action_restored" &&
+      (recovery || normalized.reason === "source_scoped_recovery_action"),
   );
   const originalAssigneeLabel =
     recovery?.originalAssignee?.name ??

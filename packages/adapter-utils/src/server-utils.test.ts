@@ -1971,6 +1971,31 @@ describe("renderPaperclipWakePrompt", () => {
     );
   });
 
+  it("treats restored source wakes with recovery metadata as executor work", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_recovery_action_restored",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-14092",
+        title: "Continue work",
+        status: "todo",
+      },
+      recovery: {
+        cause: "deliberate_wait_without_target",
+        originalAssignee: { id: "agent-1", name: "Coder" },
+        attemptCount: 2,
+        nextAction: "Continue the assigned task.",
+      },
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
+    }, { includeExecutionContract: true });
+
+    expect(prompt).toContain("Execution contract: take concrete action");
+    expect(prompt).not.toContain("Recovery contract: your job is to RECOVER");
+    expect(prompt).toContain("lead with the work");
+  });
+
   it("keeps exactly one execution contract in a composed fresh heartbeat prompt", () => {
     const wakePrompt = renderPaperclipWakePrompt({
       reason: "issue_assigned",
