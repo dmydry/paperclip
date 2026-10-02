@@ -157,6 +157,10 @@ export async function withTestTemp(callback, { instanceId, tempParent } = {}) {
           rmSync(root, { recursive: true, maxRetries: 10, retryDelay: 100 });
           removed = true;
         } catch (error) {
+          // Runtime-bundle fixtures intentionally contain read-only directories.
+          // Retain this exact owned tree instead of changing its permissions or
+          // turning successful assertions into a cleanup failure.
+          if (['EACCES', 'EPERM'].includes(error.code)) break;
           if (error.code !== 'ENOTEMPTY') throw error;
           if (attempt < 2) await delay(100);
         }
@@ -165,7 +169,7 @@ export async function withTestTemp(callback, { instanceId, tempParent } = {}) {
         marker.state = 'retained';
         marker.finished_at = Math.floor(Date.now() / 1000);
         saveMarker();
-        console.error(`[test:run] Retained temporary fixtures after cleanup race: ${root}`);
+        console.error(`[test:run] Retained temporary fixtures after incomplete cleanup: ${root}`);
       }
     } else {
       marker.state = success ? 'retained' : 'failed';

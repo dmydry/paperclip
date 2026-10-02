@@ -5,20 +5,10 @@ import { inboxDismissals, joinRequests } from "@paperclipai/db";
 import { sidebarBadgeService } from "../services/sidebar-badges.js";
 import { issueService } from "../services/issues.js";
 import { accessService } from "../services/access.js";
-import { dashboardService } from "../services/dashboard.js";
 import { collapseDuplicatePendingHumanJoinRequests } from "../lib/join-request-dedupe.js";
 import { assertCompanyAccess } from "./authz.js";
 
 const INBOX_BADGE_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked";
-
-function readDismissedAlerts(value: unknown): Set<string> {
-  const values = Array.isArray(value) ? value : value == null ? [] : [value];
-  return new Set(
-    values
-      .map((entry) => typeof entry === "string" ? entry : null)
-      .filter((entry): entry is string => entry === "alert:agent-errors" || entry === "alert:budget"),
-  );
-}
 
 function buildDismissedAtByKey(
   dismissals: Array<{ itemKey: string; kind: string; dismissedAt: Date | string; snoozedUntil: Date | string | null }>,
@@ -41,12 +31,10 @@ export function sidebarBadgeRoutes(db: Db) {
   const svc = sidebarBadgeService(db);
   const issueSvc = issueService(db);
   const access = accessService(db);
-  const dashboard = dashboardService(db);
 
   router.get("/companies/:companyId/sidebar-badges", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const dismissedAlerts = readDismissedAlerts(req.query.dismissedAlert);
     let canApproveJoins = false;
     if (req.actor.type === "board") {
       canApproveJoins =
@@ -99,23 +87,15 @@ export function sidebarBadgeRoutes(db: Db) {
           .then(buildDismissedAtByKey)
         : new Map<string, number>();
 
+    // Company health alerts belong in All, not the personal inbox badge.
     const badges = await svc.get(companyId, {
+      currentUserId: req.actor.type === "board"
+        ? req.actor.userId ?? null
+        : req.actor.onBehalfOfUserId ?? null,
       dismissals: dismissedAtByKey,
       joinRequests: visibleJoinRequests,
       unreadTouchedIssues: unreadTouchedIssueCount,
     });
-    const summary = await dashboard.summary(companyId);
-    const hasFailedRuns = badges.failedRuns > 0;
-    const alertsCount =
-      (summary.agents.error > 0 && !hasFailedRuns && !dismissedAlerts.has("alert:agent-errors") ? 1 : 0) +
-      (summary.costs.monthBudgetCents > 0 && summary.costs.monthUtilizationPercent >= 80 && !dismissedAlerts.has("alert:budget") ? 1 : 0);
-    badges.alerts = alertsCount;
-    badges.inbox =
-      badges.failedRuns +
-      alertsCount +
-      badges.joinRequests +
-      badges.approvals +
-      unreadTouchedIssueCount;
 
     res.json(badges);
   });

@@ -16,6 +16,12 @@ const fixturePath = path.join(
 );
 const tempRoots: string[] = [];
 
+async function writeFailureFile(root: string, title: string): Promise<string> {
+  const file = path.join(root, "failure.json");
+  await fs.writeFile(file, JSON.stringify({ title, category: "request" }));
+  return file;
+}
+
 afterEach(async () => {
   await Promise.all(
     tempRoots
@@ -82,7 +88,7 @@ it.runIf(process.platform === "linux")("records an actual OS E2BIG as a pre-prov
   expect(result.executionRecovery).toEqual({ kind: "bootstrap", providerWorkStarted: false });
 });
 
-it("fails closed on a typed ACP session failure without exposing its provider text", async () => {
+it("retains a typed ACP failure as diagnostics without making it assistant output", async () => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "paperclip-acpx-typed-failure-"),
   );
@@ -101,7 +107,7 @@ it("fails closed on a typed ACP session failure without exposing its provider te
       mode: "oneshot",
       stateDir: path.join(root, "state"),
       cwd: repoRoot,
-      env: { PAPERCLIP_ACPX_TYPED_FAILURE_CANARY: providerText },
+      env: { PAPERCLIP_ACPX_TYPED_FAILURE_FILE: await writeFailureFile(root, providerText) },
     },
     context: {},
     onLog: async (_stream: string, text: string) => logs.push(text),
@@ -110,8 +116,10 @@ it("fails closed on a typed ACP session failure without exposing its provider te
 
   expect(result.exitCode).toBe(1);
   expect(result.errorCode).toBe("acpx_turn_failed");
-  expect(JSON.stringify(result)).not.toContain(providerText);
-  expect(logs.join("\n")).not.toContain(providerText);
+  expect(result.errorMessage).toContain(providerText);
+  expect(result.resultJson?.terminalSessionFailure).toMatchObject({ title: providerText });
+  expect(result.summary).not.toContain(providerText);
+  expect(logs.join("\n")).toContain(providerText);
   expect(result.summary).toContain("terminal request failure");
 });
 
@@ -135,7 +143,7 @@ it("fails closed on a typed ACP session failure in persistent mode", async () =>
       warmHandleIdleMs: 0,
       stateDir: path.join(root, "state"),
       cwd: repoRoot,
-      env: { PAPERCLIP_ACPX_TYPED_FAILURE_CANARY: providerText },
+      env: { PAPERCLIP_ACPX_TYPED_FAILURE_FILE: await writeFailureFile(root, providerText) },
     },
     context: {},
     onLog: async (_stream: string, text: string) => logs.push(text),
@@ -144,8 +152,10 @@ it("fails closed on a typed ACP session failure in persistent mode", async () =>
 
   expect(result.exitCode).toBe(1);
   expect(result.errorCode).toBe("acpx_turn_failed");
-  expect(JSON.stringify(result)).not.toContain(providerText);
-  expect(logs.join("\n")).not.toContain(providerText);
+  expect(result.errorMessage).toContain(providerText);
+  expect(result.resultJson?.terminalSessionFailure).toMatchObject({ title: providerText });
+  expect(result.summary).not.toContain(providerText);
+  expect(logs.join("\n")).toContain(providerText);
   expect(result.summary).toContain("terminal request failure");
 });
 

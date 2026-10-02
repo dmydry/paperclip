@@ -3455,6 +3455,28 @@ describe("dirty git worktree completion guard", () => {
 });
 
 describe("requiresIsolatedWorkspaceGuard", () => {
+  it("allows an explicitly preflighted repository-free task directory", () => {
+    expect(requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace",
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/isolated-task" }),
+      executionWorkspace: buildRealizedWorkspace({
+        cwd: "/tmp/isolated-task", strategy: "project_primary", worktreePath: null,
+      }),
+      isolatedTaskDirectoryCwd: "/tmp/isolated-task",
+    })).toBe(false);
+  });
+
+  it.each(["realized", "resolved"])("rejects a %s directory that differs from the task binding", (mismatch) => {
+    expect(requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace",
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: mismatch === "resolved" ? "/tmp/shared" : "/tmp/isolated-task" }),
+      executionWorkspace: buildRealizedWorkspace({
+        cwd: mismatch === "realized" ? "/tmp/shared" : "/tmp/isolated-task", strategy: "project_primary", worktreePath: null,
+      }),
+      isolatedTaskDirectoryCwd: "/tmp/isolated-task",
+    })).toBe(true);
+  });
+
   it("flags isolated-mode runs that stayed on the base project clone", () => {
     expect(
       requiresIsolatedWorkspaceGuard({

@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxManagedRuntimeAsset } from "@paperclipai/adapter-utils/sandbox-managed-runtime";
 
@@ -86,6 +86,13 @@ prepareAdapterExecutionTargetRuntime.mockImplementation(async (input: { assets?:
 describe("codex execute — outbound auth copy-back restore contribution", () => {
   const cleanupDirs: string[] = [];
   let savedCodexHomeEnv: string | undefined;
+  let savedPaperclipHomeEnv: string | undefined;
+
+  beforeEach(() => {
+    savedCodexHomeEnv = process.env.CODEX_HOME;
+    savedPaperclipHomeEnv = process.env.PAPERCLIP_HOME;
+    captured.assets = [];
+  });
 
   afterEach(async () => {
     vi.clearAllMocks();
@@ -93,6 +100,11 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
       delete process.env.CODEX_HOME;
     } else {
       process.env.CODEX_HOME = savedCodexHomeEnv;
+    }
+    if (savedPaperclipHomeEnv === undefined) {
+      delete process.env.PAPERCLIP_HOME;
+    } else {
+      process.env.PAPERCLIP_HOME = savedPaperclipHomeEnv;
     }
     while (cleanupDirs.length > 0) {
       const dir = cleanupDirs.pop();
@@ -117,27 +129,27 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
     );
   }
 
-  async function runTeardown(input: { sandboxAuth: string; hostAuth: string }) {
+  async function runTeardown(input: { sandboxAuth: string; hostAuth: string; onProviderStopped?: () => Promise<void> }) {
     const rootDir = await mkdtemp(
       path.join(os.tmpdir(), "paperclip-codex-copyback-e2e-"),
     );
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
-    // The shared host home is what `resolveSharedCodexHomeDir` returns
-    // (process.env.CODEX_HOME) — the copy-back target. Point it at a tmp dir so
-    // the round-trip never touches the real host credential.
+    // The subscription source is the copy-back target, not the isolated agent
+    // runtime home. Keep both, including identity cache slots, private per case.
     const sharedHostHome = path.join(rootDir, "shared-codex-home");
     await mkdir(workspaceDir, { recursive: true });
     await mkdir(sharedHostHome, { recursive: true });
     const hostAuthPath = path.join(sharedHostHome, "auth.json");
     await writeFile(hostAuthPath, input.hostAuth, { mode: 0o600 });
 
-    savedCodexHomeEnv = process.env.CODEX_HOME;
     process.env.CODEX_HOME = sharedHostHome;
+    process.env.PAPERCLIP_HOME = path.join(rootDir, "paperclip-home");
     sandboxAuthFixture.bytes = Buffer.from(input.sandboxAuth, "utf8");
 
     const executionResult = await execute({
       runId: "run-copyback-e2e",
+      onProviderStopped: input.onProviderStopped,
       agent: {
         id: "agent-1",
         companyId: "company-1",
@@ -149,8 +161,9 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
       config: {
         command: "codex",
         engine: "cli",
-        // External CODEX_HOME (outside the managed company tree) so no managed
-        // seeding rewrites auth.json before teardown; equals the shared host home.
+        codexAuthSourceHome: sharedHostHome,
+        // Legacy shared runtime paths are normalized onto the per-agent home.
+        // The subscription source remains the outbound copy-back destination.
         env: { CODEX_HOME: sharedHostHome },
       },
       context: {
@@ -180,6 +193,44 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
       executionResult,
     };
   }
+
+  it("collects stopped-provider instruction edits before a throwing remote restore", async () => {
+    const order: string[] = [];
+    prepareAdapterExecutionTargetRuntime.mockImplementationOnce(async () => ({
+      target: { kind: "remote", transport: "ssh" }, workspaceRemoteDir: "/remote/workspace",
+      runtimeRootDir: REMOTE_RUNTIME_ROOT, assetDirs: { home: `${REMOTE_RUNTIME_ROOT}/home` },
+      restoreWorkspace: async () => { order.push("restore"); throw new Error("restore failed"); },
+    }));
+    const auth = subscriptionAuth({ accountId: "acct", marker: "fixture" });
+    await expect(runTeardown({ sandboxAuth: auth, hostAuth: auth, onProviderStopped: async () => { order.push("collect"); } })).rejects.toThrow("restore failed");
+    expect(order).toEqual(["collect", "restore"]);
+  });
+
+  it("collects after a failed provider exit before restoring its workspace", async () => {
+    runChildProcess.mockResolvedValueOnce({ exitCode: 1, signal: null, timedOut: false, stdout: "", stderr: "provider failed", pid: 321, startedAt: new Date().toISOString() });
+    const collected = vi.fn(async () => {});
+    const auth = subscriptionAuth({ accountId: "acct", marker: "fixture" });
+    await runTeardown({ sandboxAuth: auth, hostAuth: auth, onProviderStopped: collected });
+    expect(collected).toHaveBeenCalledOnce();
+  });
+
+  it("stops the bridge and restores the workspace when instruction collection rejects", async () => {
+    const order: string[] = [];
+    startAdapterExecutionTargetPaperclipBridge.mockResolvedValueOnce({
+      env: {}, stop: async () => { order.push("bridge-stop"); },
+    } as never);
+    prepareAdapterExecutionTargetRuntime.mockImplementationOnce(async () => ({
+      target: { kind: "remote", transport: "ssh" }, workspaceRemoteDir: "/remote/workspace",
+      runtimeRootDir: REMOTE_RUNTIME_ROOT, assetDirs: { home: `${REMOTE_RUNTIME_ROOT}/home` },
+      restoreWorkspace: async () => { order.push("restore"); },
+    }));
+    const auth = subscriptionAuth({ accountId: "acct", marker: "fixture" });
+    await expect(runTeardown({ sandboxAuth: auth, hostAuth: auth, onProviderStopped: async () => {
+      order.push("collect");
+      throw new Error("instruction collection failed");
+    } })).rejects.toThrow("instruction collection failed");
+    expect(order).toEqual(["collect", "bridge-stop", "restore"]);
+  });
 
   it("declares a Codex `home` asset carrying both inbound provision and outbound restore contributions", async () => {
     await runTeardown({

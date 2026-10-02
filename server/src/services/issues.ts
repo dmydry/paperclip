@@ -1,3 +1,6 @@
+import { recordChatHandoff, recordChatCompletion, existingChatCompletionReply, acknowledgeChatCompletionReply } from "./chat-completion-delivery.js";
+import { mirrorSlackBoardComment, slackBoardReplyBindings } from "./slack-board-messages.js";
+import { assertAgentRunWriteAllowed } from "../agent-run-cancellation.js";
 import { externalConversationStateSql, nonIdleSlackIssueCondition, resumeSlackConversation } from "./slack-conversation-state.js";
 import { documentService } from "./documents.js";
 import { parseTaskSearch, taskSearchCtes, taskSearchScore } from "./task-search.js";
@@ -230,6 +233,7 @@ const ISSUE_COMMENT_RUN_LOG_DERIVATION_MAX_LOG_BYTES = 2_000_000;
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_CHUNK_BYTES = 256_000;
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_END_SLACK_MS = 60_000;
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_MAX_PARALLEL_READS = 8;
+const ISSUE_COMMENT_RUN_LOG_DERIVATION_TIMEOUT_MS = 3_000;
 export const ISSUE_CREATE_IDEMPOTENCY_KEY_RETENTION_DAYS = 7;
 const ISSUE_CREATE_IDEMPOTENCY_KEY_RETENTION_MS =
   ISSUE_CREATE_IDEMPOTENCY_KEY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -1134,6 +1138,7 @@ export async function resolveChatOriginPublicationBindings(
     const run = await dbOrTx
       .select({
         agentId: heartbeatRuns.agentId,
+        responsibleUserId: heartbeatRuns.responsibleUserId,
         contextSnapshot: heartbeatRuns.contextSnapshot,
       })
       .from(heartbeatRuns)
@@ -1147,6 +1152,7 @@ export async function resolveChatOriginPublicationBindings(
         (
           rows: Array<{
             agentId: string;
+            responsibleUserId: string | null;
             contextSnapshot: Record<string, unknown> | null;
           }>,
         ) => rows[0] ?? null,
@@ -1160,6 +1166,12 @@ export async function resolveChatOriginPublicationBindings(
       readStringFromRecord(snapshot, "issueId") ??
       readStringFromRecord(snapshot, "taskId");
     if (snapshotIssueId && snapshotIssueId !== issueId) return [];
+
+    const boardBindings = await slackBoardReplyBindings(dbOrTx, {
+      companyId, issueId, agentId: lineageAgentId!,
+      commentIds: readChatWakeCommentIds(snapshot), userId: run.responsibleUserId,
+    });
+    if (boardBindings.length) return boardBindings;
 
     // A native runner can emit its continuation immediately after the durable
     // `request.resolve` command is queued, before the delivery worker records
@@ -1918,7 +1930,8 @@ async function assertExecutionTaskParent(db: Db, companyId: string, parentId?: s
 }
 
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId"> & {
+type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "title" | "titleNeedsGeneration"> & {
+  title?: string;
   initialPlan?: string | null;
   labelIds?: string[];
   blockedByIssueIds?: string[];
@@ -1931,6 +1944,7 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId"> & {
   trustExplicitResponsibleUserId?: boolean;
   idempotencyKey?: string | null;
   allowDuplicate?: boolean;
+  assertCanReuseIssue?: (issue: typeof issues.$inferSelect) => Promise<void>;
   onDeduplicated?: (reason: "idempotency_key" | "recent_open_title") => void;
 };
 type IssueChildCreateInput = IssueCreateInput & {
@@ -4897,6 +4911,7 @@ const issueListSelect = {
   goalId: issues.goalId,
   parentId: issues.parentId,
   title: issues.title,
+  titleNeedsGeneration: issues.titleNeedsGeneration,
   description: sql<string | null>`
     CASE
       WHEN ${issues.description} IS NULL THEN NULL
@@ -6590,6 +6605,76 @@ async function countBlockedInboxIssues(
   }, 0);
 }
 
+export async function readIssueCommentRunLogText(run: {
+  runId?: string | null;
+  logStore: string | null;
+  logRef: string | null;
+  logBytes: number | null;
+}) {
+  if (run.logStore !== "local_file" || !run.logRef) return "";
+  // A timed-out finalization leaves size unknown even when earlier entries
+  // exist. Read those logs within the same byte budget as a known-size log.
+  if (run.logBytes !== null && (!Number.isFinite(run.logBytes) || run.logBytes <= 0)) return "";
+
+  const logRef = run.logRef;
+  const store = getRunLogStore();
+  let offset = 0;
+  let content = "";
+  let nextOffset: number | undefined = 0;
+  const controller = new AbortController();
+  let readTimer: NodeJS.Timeout | undefined;
+
+  const readChunks = async () => {
+    while (nextOffset !== undefined) {
+      controller.signal.throwIfAborted();
+      const remainingBytes =
+        ISSUE_COMMENT_RUN_LOG_DERIVATION_MAX_LOG_BYTES -
+        Buffer.byteLength(content, "utf8");
+      if (remainingBytes <= 0) break;
+      const chunk = await store.read(
+        { store: "local_file", logRef },
+        {
+          offset,
+          limitBytes: Math.min(ISSUE_COMMENT_RUN_LOG_DERIVATION_CHUNK_BYTES, remainingBytes),
+          signal: controller.signal,
+        },
+      );
+      controller.signal.throwIfAborted();
+      content += chunk.content;
+      nextOffset = chunk.nextOffset;
+      offset = chunk.nextOffset ?? 0;
+    }
+  };
+
+  try {
+    await Promise.race([
+      readChunks(),
+      new Promise<never>((_resolve, reject) => {
+        readTimer = setTimeout(() => {
+          const reason = new DOMException("Attribution log read timed out", "TimeoutError");
+          // Cancellation closes storage work where supported, but filesystem
+          // I/O can delay stream destruction. Keep the response deadline too.
+          reject(reason);
+          controller.abort(reason);
+        }, ISSUE_COMMENT_RUN_LOG_DERIVATION_TIMEOUT_MS);
+        readTimer.unref?.();
+      }),
+    ]);
+  } catch (err) {
+    // Attribution enriches already-authorized comments. Missing, failed, or
+    // stalled storage must not prevent listing them; keep any evidence read.
+    // Do not log raw provider errors, which can contain credentialed URLs.
+    logger.warn(
+      { runId: run.runId ?? undefined, logRef, status: err instanceof HttpError ? err.status : undefined },
+      "could not read heartbeat run log while deriving optional issue comment metadata",
+    );
+  } finally {
+    clearTimeout(readTimer);
+  }
+
+  return content;
+}
+
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
   const treeControlSvc = issueTreeControlService(db);
@@ -6808,54 +6893,6 @@ export function issueService(db: Db) {
     };
   }
 
-  async function readRunLogText(run: {
-    runId?: string | null;
-    logStore: string | null;
-    logRef: string | null;
-    logBytes: number | null;
-  }) {
-    if (run.logStore !== "local_file" || !run.logRef) return "";
-    const logBytes = Number(run.logBytes ?? 0);
-    if (!Number.isFinite(logBytes) || logBytes <= 0) return "";
-
-    const store = getRunLogStore();
-    let offset = 0;
-    let content = "";
-    let nextOffset: number | undefined = 0;
-
-    try {
-      while (nextOffset !== undefined) {
-        const remainingBytes =
-          ISSUE_COMMENT_RUN_LOG_DERIVATION_MAX_LOG_BYTES -
-          Buffer.byteLength(content, "utf8");
-        if (remainingBytes <= 0) break;
-        const chunk = await store.read(
-          { store: "local_file", logRef: run.logRef },
-          {
-            offset,
-            limitBytes: Math.min(
-              ISSUE_COMMENT_RUN_LOG_DERIVATION_CHUNK_BYTES,
-              remainingBytes,
-            ),
-          },
-        );
-        content += chunk.content;
-        nextOffset = chunk.nextOffset;
-        offset = chunk.nextOffset ?? 0;
-      }
-    } catch (err) {
-      if (err instanceof HttpError && err.status === 404) {
-        logger.warn(
-          { err, runId: run.runId ?? undefined, logRef: run.logRef },
-          "missing heartbeat run log while deriving issue comment metadata",
-        );
-        return content;
-      }
-      throw err;
-    }
-
-    return content;
-  }
 
   // Persist a resolved attribution so subsequent reads stop re-scanning run
   // logs (and old "Board" threads stay fixed durably). Best-effort: a write
@@ -7075,7 +7112,7 @@ export function issueService(db: Db) {
           );
           await Promise.all(
             batch.map(async (run) => {
-              logByRunId.set(run.runId, await readRunLogText(run));
+              logByRunId.set(run.runId, await readIssueCommentRunLogText(run));
             }),
           );
         }
@@ -9151,6 +9188,7 @@ export function issueService(db: Db) {
         .select({
           id: issues.id,
           conversationAgentId: issues.conversationAgentId,
+          originKind: issues.originKind,
           assigneeAgentId: issues.assigneeAgentId,
           status: issues.status,
           companyId: issues.companyId,
@@ -9158,7 +9196,8 @@ export function issueService(db: Db) {
         .from(issues)
         .where(eq(issues.id, parentIssueId))
         .then((rows) => rows[0] ?? null);
-      if (!parent || parent.conversationAgentId || !parent.assigneeAgentId || ["backlog", "done", "cancelled"].includes(parent.status)) {
+      if (!parent || parent.conversationAgentId || !parent.assigneeAgentId || ["backlog", "cancelled"].includes(parent.status) ||
+          (parent.status === "done" && parent.originKind !== "onboarding_first_task")) {
         return null;
       }
 
@@ -9230,6 +9269,7 @@ export function issueService(db: Db) {
         }));
 
       return {
+        onboardingCompletion: parent.originKind === "onboarding_first_task",
         id: parent.id,
         assigneeAgentId: parent.assigneeAgentId,
         childIssueIds: children.map((child) => child.id),
@@ -9268,6 +9308,7 @@ export function issueService(db: Db) {
               "Child creation idempotency key belongs to another parent issue",
             );
           }
+          await data.assertCanReuseIssue?.(existingChild);
           data.onDeduplicated?.("idempotency_key");
           const [enriched] = await withIssueLabels(db, [existingChild]);
           const [withRelations] = await withIssueRelationSummaries(
@@ -9762,6 +9803,10 @@ export function issueService(db: Db) {
       });
     },
 
+    listConversations: async (companyId: string, userId: string) => db.select().from(issues).where(and(
+      eq(issues.companyId, companyId), eq(issues.conversationUserId, userId), isNotNull(issues.conversationAgentId),
+    )).orderBy(desc(issues.updatedAt), asc(issues.id)),
+
     getConversation: async (companyId: string, agentId: string, userId: string) => db.select().from(issues).where(and(
       eq(issues.companyId, companyId), eq(issues.conversationAgentId, agentId), eq(issues.conversationUserId, userId),
     )).then((rows) => rows[0] ?? null),
@@ -9784,9 +9829,18 @@ export function issueService(db: Db) {
         trustExplicitResponsibleUserId,
         idempotencyKey: rawIdempotencyKey,
         allowDuplicate,
+        assertCanReuseIssue,
         onDeduplicated,
         ...issueData
       } = data;
+      const explicitTitle = issueData.title?.trim();
+      const provisionalTitle = issueData.description?.trim().replace(/\s+/g, " ").slice(0, 120);
+      const resolvedTitle = explicitTitle || provisionalTitle;
+      if (!resolvedTitle) throw unprocessable("Provide a title or task description");
+      const titleNeedsGeneration = !explicitTitle;
+      // A prompt prefix is not a task identity: distinct requests can share it.
+      const deduplicateByTitle = allowDuplicate === false && !titleNeedsGeneration;
+      issueData.title = resolvedTitle;
       const isolatedWorkspacesEnabled = (
         await instanceSettings.getExperimental()
       ).enableIsolatedWorkspaces;
@@ -9827,8 +9881,8 @@ export function issueService(db: Db) {
           }
         }
         const idempotencyKey = rawIdempotencyKey?.trim() || null;
-        const normalizedTitle = normalizeCreateIssueTitle(issueData.title);
-        if (allowDuplicate === false) {
+        const normalizedTitle = normalizeCreateIssueTitle(resolvedTitle);
+        if (deduplicateByTitle) {
           const titleGuardKey = `issue-create:title:${companyId}:${issueData.parentId ?? "root"}:${normalizedTitle}`;
           await tx.execute(
             sql`select pg_advisory_xact_lock(hashtextextended(${titleGuardKey}, 0))`,
@@ -9877,7 +9931,7 @@ export function issueService(db: Db) {
             .then((rows) => rows.map((row) => row.issues));
           if (existingIssue) deduplicationReason = "idempotency_key";
         }
-        if (!existingIssue && allowDuplicate === false) {
+        if (!existingIssue && deduplicateByTitle) {
           [existingIssue] = await tx
             .select()
             .from(issues)
@@ -9901,6 +9955,8 @@ export function issueService(db: Db) {
           if (existingIssue) deduplicationReason = "recent_open_title";
         }
         if (existingIssue) {
+          // A duplicate may have a different scope or assignee than the proposed task.
+          await assertCanReuseIssue?.(existingIssue);
           if (idempotencyKey) {
             await tx
               .insert(issueCreateIdempotencyKeys)
@@ -10159,6 +10215,7 @@ export function issueService(db: Db) {
 
         const values = {
           ...issueData,
+          titleNeedsGeneration,
           originRunId: issueData.originRunId ?? actorRunId ?? null,
           responsibleUserId,
           requestDepth: clampIssueRequestDepth(issueData.requestDepth),
@@ -10201,6 +10258,7 @@ export function issueService(db: Db) {
         );
 
         const [issue] = await tx.insert(issues).values(values).returning();
+        await recordChatHandoff(tx, issue, actorRunId);
         if (idempotencyKey) {
           await tx.insert(issueCreateIdempotencyKeys).values({
             companyId,
@@ -10239,6 +10297,7 @@ export function issueService(db: Db) {
             issueId: issue.id, key: "plan", title: "Plan", format: "markdown", body: initialPlan,
             createdByAgentId: issueData.createdByAgentId, createdByUserId: issueData.createdByUserId,
             createdByRunId: actorRunId,
+            sourceTrust: issue.sourceTrust,
           });
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
@@ -10602,6 +10661,8 @@ export function issueService(db: Db) {
         labelIds?: string[];
         blockedByIssueIds?: string[];
         actorAgentId?: string | null;
+        actorRunId?: string | null;
+        actorRunStopId?: string | null;
         actorUserId?: string | null;
         companyGuard?: string;
       },
@@ -10647,10 +10708,14 @@ export function issueService(db: Db) {
         labelIds: nextLabelIds,
         blockedByIssueIds,
         actorAgentId,
+        actorRunId,
+        actorRunStopId,
         actorUserId,
         companyGuard,
         ...issueData
       } = data;
+      // An explicit edit claims the title, even if it keeps the same text.
+      if (issueData.title !== undefined) issueData.titleNeedsGeneration = false;
       if (
         issueData.assigneeAgentId !== undefined &&
         issueData.assigneeAgentId !== existing.assigneeAgentId
@@ -10920,6 +10985,13 @@ export function issueService(db: Db) {
           .for("update")
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!receiptExisting) return null;
+        if (actorAgentId && actorRunId) {
+          // Recheck under a run lock: a request admitted before Stop must not
+          // commit a late Done after cancellation revoked its credentials.
+          await assertAgentRunWriteAllowed(tx, receiptExisting.companyId, {
+            agentId: actorAgentId, runId: actorRunId, stopId: actorRunStopId,
+          });
+        }
         if (actorAgentId && patch.status === "done") {
           const [review] = await tx.select({ id: toolActionRequests.id }).from(toolActionRequests).where(and(eq(toolActionRequests.companyId, existing.companyId), eq(toolActionRequests.issueId, id), inArray(toolActionRequests.status, ["pending", "approved", "executing"]))).limit(1);
           if (review) throw conflict("This task is waiting for a connection review. Finish unrelated work, then yield in_review without retrying the governed call.", { code: "tool_review_pending", actionRequestId: review.id });
@@ -10959,6 +11031,15 @@ export function issueService(db: Db) {
         if ((issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== receiptExisting.assigneeAgentId)
           || (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== receiptExisting.assigneeUserId)) {
           patch.statusVersion = sql`${issues.statusVersion} + 1` as unknown as number;
+          // Invalidate human direction at the common assignment boundary, including
+          // plugin/service writes that do not go through HTTP run cancellation.
+          // Keep the requester attribution for audit; cancellation revokes its use.
+          await tx.update(agentWakeupRequests).set({ status: "cancelled", finishedAt: new Date(), updatedAt: new Date() })
+            .where(and(eq(agentWakeupRequests.companyId, receiptExisting.companyId),
+              eq(agentWakeupRequests.requestedByActorType, "user"),
+              sql`coalesce(${agentWakeupRequests.payload}->>'issueId', ${agentWakeupRequests.payload}->>'taskId',
+                ${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'issueId',
+                ${agentWakeupRequests.payload}->'_paperclipWakeContext'->>'taskId') = ${id}`));
         }
         // Reasserting Blocked or changing its blockers is a fresh decision even
         // when the status string stays the same. Invalidate recovery's prior
@@ -10976,6 +11057,7 @@ export function issueService(db: Db) {
           .returning()
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!updated) return null;
+        await recordChatCompletion(tx, receiptExisting, updated);
         // An operator explicitly choosing a disposition owns that decision,
         // including choosing In Review while the conversation is Idle.
         if (actorUserId && issueData.status !== undefined) {
@@ -11818,14 +11900,16 @@ export function issueService(db: Db) {
           }
         }
 
-        // Release clears checkout/assignee locks; only in_progress work re-queues to todo.
+        // Terminal assignment records who owned the work, not a live execution
+        // claim. Cleanup must preserve it; unfinished release still relinquishes it.
+        const isTerminal = existing.status === "done" || existing.status === "cancelled";
         const releaseStatus =
           existing.status === "in_progress" ? "todo" : existing.status;
         const updated = await tx
           .update(issues)
           .set({
             status: releaseStatus,
-            assigneeAgentId: null,
+            assigneeAgentId: isTerminal ? existing.assigneeAgentId : null,
             checkoutRunId: null,
             executionRunId: null,
             executionAgentNameKey: null,
@@ -12143,9 +12227,13 @@ export function issueService(db: Db) {
         metadata?: IssueCommentMetadata | null;
         attachmentIds?: string[];
         authorizationReason?: string | null;
+        /** Server-only final assistant response, never a tool/progress comment. */
+        completionReply?: boolean;
         sourceTrust?: typeof issueComments.$inferInsert.sourceTrust;
         createdAt?: Date | string | null;
         clientRequestId?: string;
+        /** Server-only: authenticated Paperclip messages also belong in the Slack thread. */
+        mirrorToSlack?: boolean;
       },
       dbOrTx: any = db,
     ): Promise<IssueComment> {
@@ -12168,14 +12256,15 @@ export function issueService(db: Db) {
           ? retryNativeChatReviewPresentation(append)
           : append();
       }
-      // Callers supplying a transaction still share the settlement fence.
-      if (actor.userId && dbOrTx !== db) {
-        await dbOrTx.select({ id: issues.id }).from(issues).where(eq(issues.id, issueId)).for("update");
-      }
-      const issue = await dbOrTx
+      // The query below locks human comments on caller-owned transactions too,
+      // sharing the fence with both question creation and Slack settlement.
+      const issueQuery = dbOrTx
         .select({ companyId: issues.companyId, conversationAgentId: issues.conversationAgentId })
         .from(issues)
-        .where(eq(issues.id, issueId))
+        .where(eq(issues.id, issueId));
+      // Caller-owned transactions (including chat and review comments) must
+      // serialize with question creation before inserting the human comment.
+      const issue = await (actor.userId || (actor.runId && dbOrTx !== db) ? issueQuery.for("update") : issueQuery)
         .then((rows: Array<{ companyId: string; conversationAgentId: string | null }>) => rows[0] ?? null);
 
       if (!issue) throw notFound("Issue not found");
@@ -12207,6 +12296,10 @@ export function issueService(db: Db) {
           throw conflict("Conversation session changed; this reply belongs to an earlier session");
         }
       }
+      if (options?.completionReply && actor.agentId && actor.runId) {
+        const delivered = await existingChatCompletionReply(dbOrTx, actor.runId, issueId);
+        if (delivered) return redactIssueComment(delivered, currentUserRedactionOptions.enabled);
+      }
       const authorType = issueCommentAuthorTypeSchema.parse(
         options?.authorType ??
           (actor.agentId ? "agent" : actor.userId ? "user" : "system"),
@@ -12216,6 +12309,16 @@ export function issueService(db: Db) {
         .nullable()
         .parse(options?.presentation ?? null);
       const createdAt = options?.createdAt ? new Date(options.createdAt) : null;
+      const validCreatedAt =
+        createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null;
+      // Use one statement timestamp for both columns when the caller did not
+      // supply a valid historical timestamp. This keeps the comment's
+      // recency fields equal even when the surrounding transaction started
+      // earlier, while preserving imported timestamps and the normal default
+      // updatedAt behavior for those historical rows.
+      const currentInsertTimestamp = validCreatedAt
+        ? null
+        : sql`statement_timestamp()`;
       // Invalid/stale run ids must not 500 the insert — null out unknowns.
       const createdByRun = await resolveCommentCreatedByRun(
         dbOrTx,
@@ -12371,6 +12474,7 @@ export function issueService(db: Db) {
             !shouldUpgradeAttachmentAuthorization &&
             !shouldBindAttachments
           ) {
+            if (options?.completionReply && actor.agentId && createdByRunId) await acknowledgeChatCompletionReply(dbOrTx, createdByRunId, existing.id);
             return redactIssueComment(
               existing,
               currentUserRedactionOptions.enabled,
@@ -12421,13 +12525,15 @@ export function issueService(db: Db) {
             presentation,
             metadata,
             sourceTrust: options?.sourceTrust ?? null,
-            ...(createdAt && !Number.isNaN(createdAt.getTime())
-              ? { createdAt }
+            createdAt: validCreatedAt ?? currentInsertTimestamp!,
+            ...(currentInsertTimestamp
+              ? { updatedAt: currentInsertTimestamp }
               : {}),
           })
           .returning();
       }
       if (!comment) throw new Error("Failed to create issue comment");
+      if (options?.completionReply && actor.agentId && createdByRunId) await acknowledgeChatCompletionReply(dbOrTx, createdByRunId, comment.id);
 
       const boundAttachments: Array<{
         id: string;
@@ -12625,6 +12731,9 @@ export function issueService(db: Db) {
 
       if (issue.conversationAgentId && actor.userId) {
         await dbOrTx.update(issues).set({ conversationState: "active" }).where(eq(issues.id, issueId));
+      }
+      if (options?.mirrorToSlack && actor.userId && authorType === "user") {
+        await mirrorSlackBoardComment(dbOrTx, comment, { attachmentIds: options.attachmentIds });
       }
       if (authorType === "user" || actor.userId) {
         await resumeSlackConversation(dbOrTx, issue.companyId, issueId);

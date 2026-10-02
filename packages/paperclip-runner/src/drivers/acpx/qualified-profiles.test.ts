@@ -7,7 +7,7 @@ import {
 
 describe("qualified ACPX profiles", () => {
   it("binds each agent to one immutable package and model declaration", () => {
-    for (const agent of ["pi", "claude", "codex"] as const) {
+    for (const agent of ["pi", "claude", "codex", "grok"] as const) {
       const profile = QUALIFIED_ACPX_PROFILES[agent];
       expect(profile.agent).toBe(agent);
       expect(profile.commandDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -34,7 +34,7 @@ describe("qualified ACPX profiles", () => {
   it("binds Codex ACP to the CLI runtime it launches", () => {
     expect(QUALIFIED_ACPX_PROFILES.codex).toMatchObject({
       agentRuntimePackage: "@openai/codex",
-      agentRuntimeVersion: "0.156.0",
+      agentRuntimeVersion: "0.159.2",
     });
   });
 

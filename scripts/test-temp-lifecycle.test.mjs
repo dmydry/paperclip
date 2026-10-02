@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -64,6 +64,29 @@ test('failed command preserves a dated fixture and original exit code', async ()
     assert.equal(marker.state, 'failed');
     assert.ok(marker.finished_at > 0);
   } finally { if (root) rmSync(root, { recursive: true }); }
+});
+
+test('read-only fixture cleanup retains evidence without failing successful assertions', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, async () => {
+  let root;
+  let readonly;
+  try {
+    await withTestTemp(async context => {
+      root = context.root;
+      readonly = path.join(root, 'readonly-bundle');
+      mkdirSync(readonly);
+      writeFileSync(path.join(readonly, 'evidence'), 'keep');
+      chmodSync(readonly, 0o500);
+    });
+    const marker = JSON.parse(readFileSync(path.join(root, '.paperclip-test-temp.json')));
+    assert.equal(marker.state, 'retained');
+    assert.ok(marker.finished_at > 0);
+    assert.equal(readFileSync(path.join(readonly, 'evidence'), 'utf8'), 'keep');
+  } finally {
+    if (readonly) chmodSync(readonly, 0o700);
+    if (root) rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('command-start failure returns an error and preserves diagnostics', async () => {
