@@ -109,6 +109,18 @@ code (`packages/shared/src/mcp-remote-headers.ts`), checked at the API boundary,
 and re-checked in the service immediately before the header is projected onto a
 real request.
 
+## Remote tool call timeout
+
+Remote MCP calls without an explicit caller budget default to 10 seconds.
+Operators can set `config.toolTimeoutMs` through the existing connection API
+for a provider that needs a longer interactive window, such as a read-only
+release preflight. The value must be a finite number; execution clamps it to
+1–60,000 milliseconds. Invalid or missing values use the 10-second default.
+An explicit caller timeout takes precedence. Approved actions continue to use
+`config.approvedExecutionTimeoutMs`, independently of this interactive setting.
+Changing the timeout does not grant access, bypass approval, or replay a call.
+The reviewed Railway command budget retains its existing precedence.
+
 ## How sign-in gets a client
 
 You never choose this; Paperclip resolves it and the wizard shows none of it.

@@ -3872,6 +3872,97 @@ rl.on("line", (line) => {
     }
   });
 
+  it("allows a configured remote MCP preflight to complete beyond the interactive default", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const fake = await startFakeRemoteMcpServer((req) => ({
+      delayMs: 10_050,
+      body: { jsonrpc: "2.0", id: req.body?.id,
+        result: { content: [{ type: "text", text: "preflight passed" }] } },
+    }));
+    try {
+      const remote = await createRemoteMcpTool(db, company.id, {
+        applicationKey: "bounded-preflight", toolName: "inspect_backend_preflight",
+        url: fake.url, connectionConfig: { toolTimeoutMs: 30_000 },
+      });
+      await allowAllToolsForAgent(db, company.id, agent.id);
+      const gateway = createTestToolGatewayService(db);
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      const name = expectedConnectedToolName({ applicationKey: remote.application.applicationKey,
+        connectionId: remote.connection.id, toolName: remote.catalogEntry.toolName });
+      await expect(gateway.executeTool({ sessionToken: session.token, tool: name,
+        parameters: { key: "preflight", value: "exact-head" } })).resolves.toMatchObject({ status: "completed" });
+      expect(fake.requests).toHaveLength(1);
+      const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, remote.connection.id));
+      expect(connection.healthStatus).toBe("ok");
+    } finally {
+      await fake.close();
+    }
+  }, 35_000);
+
+  it.each([
+    { name: "connection budget", configured: 10, explicit: undefined },
+    { name: "explicit caller budget", configured: 30_000, explicit: 10 },
+  ])("still aborts a remote MCP call at its $name without replay", async ({ configured, explicit }) => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const fake = await startFakeRemoteMcpServer((req) => ({ delayMs: 75,
+      body: { jsonrpc: "2.0", id: req.body?.id, result: { content: [{ type: "text", text: "late" }] } },
+    }));
+    try {
+      const remote = await createRemoteMcpTool(db, company.id, { applicationKey: "bounded-timeout",
+        toolName: "kv_set", url: fake.url, connectionConfig: { toolTimeoutMs: configured } });
+      await allowAllToolsForAgent(db, company.id, agent.id);
+      const gateway = createTestToolGatewayService(db);
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      const name = expectedConnectedToolName({ applicationKey: remote.application.applicationKey,
+        connectionId: remote.connection.id, toolName: remote.catalogEntry.toolName });
+      await expect(gateway.executeTool({ sessionToken: session.token, tool: name,
+        parameters: { key: "release", value: "never-replay" }, timeoutMs: explicit }))
+        .rejects.toMatchObject({ status: 504, reasonCode: "tool_timeout" });
+      expect(fake.requests).toHaveLength(1);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it.each([
+    { configured: 120_000, expected: 60_000 },
+    { configured: "30000", expected: 10_000 },
+    { configured: undefined, expected: 10_000 },
+    { configured: Number.NaN, expected: 10_000 },
+  ])("bounds the default remote MCP budget for $configured", async ({ configured, expected }) => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const fake = await startFakeRemoteMcpServer((req) => ({
+      body: { jsonrpc: "2.0", id: req.body?.id, result: { content: [{ type: "text", text: "read" }] } },
+    }));
+    try {
+      const remote = await createRemoteMcpTool(db, company.id, {
+        applicationKey: "bounded-config", toolName: "kv_get", url: fake.url,
+        connectionConfig: { toolTimeoutMs: configured },
+      });
+      await allowAllToolsForAgent(db, company.id, agent.id);
+      const gateway = createTestToolGatewayService(db);
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      const name = expectedConnectedToolName({ applicationKey: remote.application.applicationKey,
+        connectionId: remote.connection.id, toolName: remote.catalogEntry.toolName });
+      const timer = vi.spyOn(globalThis, "setTimeout");
+      try {
+        await expect(gateway.executeTool({ sessionToken: session.token, tool: name,
+          parameters: { key: "budget" } })).resolves.toMatchObject({ status: "completed" });
+        expect(timer.mock.calls.some((call) => call[1] === expected)).toBe(true);
+      } finally {
+        timer.mockRestore();
+      }
+    } finally {
+      await fake.close();
+    }
+  });
+
   it("uses the connection approved execution timeout for an approved remote MCP call", async () => {
     const company = await createCompany(db);
     const agent = await createAgent(db, company.id);
@@ -3891,7 +3982,7 @@ rl.on("line", (line) => {
         applicationKey: "long-approved-action-app",
         toolName: "release_frontend",
         url: fake.url,
-        connectionConfig: { approvedExecutionTimeoutMs: configuredTimeoutMs },
+        connectionConfig: { toolTimeoutMs: 1, approvedExecutionTimeoutMs: configuredTimeoutMs },
       });
       const remoteToolName = expectedConnectedToolName({
         applicationKey: remoteTool.application.applicationKey,

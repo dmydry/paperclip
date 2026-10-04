@@ -5823,6 +5823,14 @@ export function createToolGatewayService(
       session,
       tool,
     );
+    // A provider may need longer than the interactive 10s default (for example,
+    // a bounded read-only release preflight). Keep this server-owned setting
+    // within the interactive 60s cap; explicit caller and approved-action
+    // budgets remain authoritative.
+    if (useDefaultTimeout) {
+      const configured = connection.config.toolTimeoutMs;
+      ms = timeoutMs(typeof configured === "number" ? configured : undefined);
+    }
     // Recheck immediately before dispatch, including previously approved calls
     // and connections whose stored grant/catalog predates scope reduction.
     assertGoogleChatToolArgumentsSupported(connection, entry.toolName, parameters);
