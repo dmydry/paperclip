@@ -49,11 +49,13 @@ export function legacyDispositionEpisode(run: {
   // allowance. A classifier/key migration must not grant them a fresh budget.
   const handoff = context.wakeReason === "finish_successful_run_handoff" || context.handoffRequired === true;
   const oldRecovery = context.source === "issue.productive_terminal_continuation_recovery";
-  const attempt = Math.max(count(run.continuationAttempt), count(context.livenessContinuationAttempt), count(context.dispositionRepairAttempt), handoff ? count(context.handoffAttempt) || 1 : 0, oldRecovery ? 1 : 0);
+  const oldDirtyWorktree = context.wakeReason === "dirty_worktree_auto_resume" ||
+    count(context.autoResumeDirtyWorktreeAttempt) > 0;
+  const attempt = Math.max(count(run.continuationAttempt), count(context.livenessContinuationAttempt), count(context.dispositionRepairAttempt), count(context.autoResumeDirtyWorktreeAttempt), handoff ? count(context.handoffAttempt) || 1 : 0, oldRecovery || oldDirtyWorktree ? 1 : 0);
   return {
     id: typeof context.dispositionRepairFingerprint === "string" ? context.dispositionRepairFingerprint : typeof context.livenessContinuationSourceRunId === "string" ? context.livenessContinuationSourceRunId : run.id,
     attempt,
-    maxAttempts: handoff || oldRecovery ? 1 : LEGACY_DISPOSITION_REPAIR_MAX_ATTEMPTS,
+    maxAttempts: handoff || oldRecovery || oldDirtyWorktree ? 1 : LEGACY_DISPOSITION_REPAIR_MAX_ATTEMPTS,
   };
 }
 export function legacyDispositionFingerprint(companyId: string, issueId: string, agentId: string, episodeId: string) {

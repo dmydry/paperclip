@@ -6,9 +6,9 @@
  * Do not query a registry at startup.
  */
 export const REMOTE_CODEX_MINIMUM_VERSION = "0.149.0";
-export const REMOTE_CODEX_MAXIMUM_VERSION_EXCLUSIVE = "0.157.0";
+export const REMOTE_CODEX_MAXIMUM_VERSION_EXCLUSIVE = "0.161.0";
 export const REMOTE_CODEX_SUPPORTED_RANGE =
-  `>=${REMOTE_CODEX_MINIMUM_VERSION} <${REMOTE_CODEX_MAXIMUM_VERSION_EXCLUSIVE} or =0.159.2`;
+  `>=${REMOTE_CODEX_MINIMUM_VERSION} <${REMOTE_CODEX_MAXIMUM_VERSION_EXCLUSIVE}`;
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -31,8 +31,6 @@ export function parseCodexCliVersion(output: string): string | null {
 export function isSupportedRemoteCodexVersion(version: string): boolean {
   const parts = stableVersionParts(version);
   if (!parts) return false;
-  // Qualify this release's exact install pin, not every intervening/new minor.
-  if (version === "0.159.2") return true;
   const minimum = stableVersionParts(REMOTE_CODEX_MINIMUM_VERSION)!;
   const maximum = stableVersionParts(REMOTE_CODEX_MAXIMUM_VERSION_EXCLUSIVE)!;
   const compare = (other: number[]) => {

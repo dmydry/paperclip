@@ -108,6 +108,7 @@ export type RegisteredPluginComponent =
 
 type SlotFilters = {
   slotTypes: PluginUiSlotType[];
+  taskSidePanel?: boolean;
   entityType?: PluginUiSlotEntityType | null;
   companyId?: string | null;
   enabled?: boolean;
@@ -662,6 +663,7 @@ export function usePluginSlots(filters: SlotFilters): UsePluginSlotsResult {
     for (const contribution of data ?? []) {
       for (const slot of contribution.slots) {
         if (!allowedTypes.has(slot.type)) continue;
+        if (filters.taskSidePanel && !slot.taskSidePanel) continue;
         if (requiresEntityType(slot.type)) {
           if (!filters.entityType) continue;
           if (!slot.entityTypes?.includes(filters.entityType)) continue;
@@ -684,7 +686,7 @@ export function usePluginSlots(filters: SlotFilters): UsePluginSlotsResult {
       return a.displayName.localeCompare(b.displayName);
     });
     return rows;
-  }, [data, filters.entityType, slotTypesKey]);
+  }, [data, filters.entityType, filters.taskSidePanel, slotTypesKey]);
 
   // A replacement surface must not disappear while an unrelated plugin loads.
   const contributions = useMemo(() => {
@@ -905,6 +907,12 @@ type PluginSlotOutletProps = {
   itemClassName?: string;
   errorClassName?: string;
   missingBehavior?: "hidden" | "placeholder";
+  /**
+   * `hidden` suppresses the inline error and keeps rendering the last loaded
+   * slots, so ambient chrome (the sidebar) stays quiet while the server is
+   * unreachable.
+   */
+  errorBehavior?: "inline" | "hidden";
 };
 
 export function PluginSlotOutlet({
@@ -915,6 +923,7 @@ export function PluginSlotOutlet({
   itemClassName,
   errorClassName,
   missingBehavior = "hidden",
+  errorBehavior = "inline",
 }: PluginSlotOutletProps) {
   const { slots, errorMessage } = usePluginSlots({
     slotTypes,
@@ -922,7 +931,7 @@ export function PluginSlotOutlet({
     companyId: context.companyId,
   });
 
-  if (errorMessage) {
+  if (errorMessage && errorBehavior === "inline") {
     return (
       <div className={cn("rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1 text-xs text-destructive", errorClassName)}>
         Plugin extensions unavailable: {errorMessage}

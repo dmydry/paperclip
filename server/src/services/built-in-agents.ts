@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createAgentLifecycle } from "./agent-lifecycle.js";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -8,7 +8,7 @@ import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } f
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
-import { syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
+import { agentHarnessType, agentRunner, syncRoutineVariablesWithTemplate, type AgentRunnerChoice } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -18,15 +18,22 @@ import { agentInstructionRevisionService } from "./agent-instruction-revisions.j
 import type { AuthorizationActor } from "./authorization.js";
 import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-instructions.js";
 import { agentService } from "./agents.js";
+import { resolveNewAgentRunnerForCompany } from "./agent-runner-selection.js";
 import { approvalService } from "./approvals.js";
 import {
   readBuiltInAgentMarker,
   withBuiltInAgentMarker,
-} from "./built-in-agent-metadata.js";
+} from "../lib/built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
+import {
+  resourceStatus,
+  stableJson,
+  stockHash,
+  type ManagedResourceStockStatus,
+} from "./managed-resource-drift.js";
 
 export type BuiltInAgentStatus = "not_provisioned" | "pending_approval" | "needs_setup" | "ready" | "paused";
 
@@ -61,6 +68,7 @@ export interface BuiltInAgentState {
 }
 
 export interface BuiltInAgentProvisionInput {
+  runner?: AgentRunnerChoice;
   adapterType?: string;
   adapterConfig?: Record<string, unknown>;
   budgetMonthlyCents?: number;
@@ -77,11 +85,7 @@ export interface BuiltInAgentProvisionResult {
 }
 
 export type BuiltInManagedResourceKind = "instructions" | "skill" | "routine";
-export type BuiltInManagedResourceStockStatus =
-  | "missing"
-  | "stock_current"
-  | "stock_update_available"
-  | "operator_modified";
+export type BuiltInManagedResourceStockStatus = ManagedResourceStockStatus;
 
 export interface BuiltInManagedResourceState {
   resourceKind: BuiltInManagedResourceKind;
@@ -185,7 +189,7 @@ const FALLBACK_REFLECTION_COACH_SKILL = [
 const FALLBACK_SUMMARIZER_INSTRUCTIONS = [
   "You are Summarizer, a built-in reporting agent at Paperclip.",
   "",
-  "Turn the current state of a Paperclip scope (project, workspaces overview, or a single project workspace) into a short, honest, human-readable Markdown summary and write it back to that scope's summary slot as a new revision. Use the `summarize-status` skill as your operating procedure.",
+  "Turn the current state of a Paperclip scope (project, workspaces overview, project workspace, or execution workspace) into a short, honest, human-readable Markdown summary and write it back to that scope's summary slot as a new revision. Use the `summarize-status` skill as your operating procedure.",
   "",
   "Read-and-report only: never change issues, workspaces, or code. Cite issue identifiers, never fabricate status, keep every read company-scoped, and run on the low-cost model profile lane by default.",
   "",
@@ -405,7 +409,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     displayName: "Summarizer",
     featureKeys: ["summarizer"],
     shortPurpose:
-      "Writes short, human-readable Markdown status summaries into project, workspaces-overview, and project-workspace summary slots on demand.",
+      "Writes short, human-readable Markdown status summaries into project, workspaces-overview, project-workspace, and execution-workspace summary slots on demand.",
     defaultInstructions: SUMMARIZER_INSTRUCTIONS,
     defaultRole: "general",
     defaultTitle: "Summarizer",
@@ -423,7 +427,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     },
     defaultBudgetMonthlyCents: 0,
     bundle: {
-      stockVersion: "2026-07-15",
+      stockVersion: "2026-08-02",
       instructions: {
         entryFile: "AGENTS.md",
         files: {
@@ -456,7 +460,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
             type: "select",
             defaultValue: "all",
             required: true,
-            options: ["all", "project", "workspaces_overview", "project_workspace"],
+            options: ["all", "project", "workspaces_overview", "project_workspace", "execution_workspace"],
           },
         ],
         triggers: [
@@ -475,8 +479,10 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
 
 const DEFINITIONS_BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.key, definition]));
 
-// Existing opt-in bundles are reconciled on startup, but no built-in agent is
-// created for a fresh company unless its key is explicitly allowlisted here.
+// Bundled built-in agents that should be provisioned automatically when a
+// company is created (and re-ensured on startup reconcile). Empty by default so
+// a new user starts clean — the Reflection Coach and Summarizer are opt-in, not
+// seeded. Add a definition key here to restore automatic provisioning.
 const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([]);
 
 const ROOT_AGENT_DEFAULT_CHANGE_GRANTS: PermissionKey[] = ["agents:configure", "skills:create"];
@@ -504,40 +510,11 @@ function uniqueNonEmptyStrings(values: string[]) {
   return result;
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function stockHash(value: unknown) {
-  return `sha256:${createHash("sha256").update(stableJson(value)).digest("hex")}`;
-}
-
 function changedFileList(currentFiles: Record<string, string | null>, stockFiles: Record<string, string>) {
   const paths = new Set([...Object.keys(currentFiles), ...Object.keys(stockFiles)]);
   return [...paths]
     .filter((filePath) => (currentFiles[filePath] ?? null) !== (stockFiles[filePath] ?? null))
     .sort((left, right) => left.localeCompare(right));
-}
-
-function resourceStatus(input: {
-  resourceId: string | null;
-  currentHash: string | null;
-  bindingStockHash: string | null;
-  latestStockHash: string;
-}): BuiltInManagedResourceStockStatus {
-  if (!input.resourceId || !input.currentHash) return "missing";
-  if (input.currentHash === input.latestStockHash) return "stock_current";
-  if (input.bindingStockHash && input.currentHash === input.bindingStockHash) {
-    return "stock_update_available";
-  }
-  return "operator_modified";
 }
 
 function stockState(input: {
@@ -715,8 +692,8 @@ function selectPreferredAdapterType(
   return selected?.adapterType ?? fallback;
 }
 
-function assertAdapterAllowed(definition: BuiltInAgentDefinition, adapterType: string) {
-  if (definition.allowedAdapterTypes && !definition.allowedAdapterTypes.includes(adapterType)) {
+function assertAdapterAllowed(definition: BuiltInAgentDefinition, adapterType: string, adapterConfig: Record<string, unknown> = {}) {
+  if (definition.allowedAdapterTypes && !definition.allowedAdapterTypes.includes(agentHarnessType(adapterType, adapterConfig))) {
     throw unprocessable(`Adapter type ${adapterType} is not allowed for built-in agent ${definition.key}`, {
       code: "built_in_agent_adapter_not_allowed",
       key: definition.key,
@@ -739,11 +716,11 @@ function hasCompleteAdapterConfig(adapterType: string, adapterConfig: unknown) {
   return nonEmptyString(adapterConfig.model);
 }
 
-export function deriveBuiltInAgentStatus(agent: Pick<Agent, "adapterType" | "adapterConfig" | "status" | "pausedAt"> | null): BuiltInAgentStatus {
+export function deriveBuiltInAgentStatus(agent: Pick<Agent, "adapterType" | "adapterConfig" | "status" | "pausedAt"> & { metadata?: Agent["metadata"] } | null): BuiltInAgentStatus {
   if (!agent) return "not_provisioned";
   if (agent.status === "pending_approval") return "pending_approval";
   if (agent.status === "paused" || agent.pausedAt) return "paused";
-  return hasCompleteAdapterConfig(agent.adapterType, agent.adapterConfig) ? "ready" : "needs_setup";
+  return agent.metadata?.paperclipBuiltInSetupRequired !== true && hasCompleteAdapterConfig(agent.adapterType, agent.adapterConfig) ? "ready" : "needs_setup";
 }
 
 function builtInMetadata(definition: BuiltInAgentDefinition, existing?: Record<string, unknown> | null) {
@@ -755,8 +732,9 @@ function builtInMetadata(definition: BuiltInAgentDefinition, existing?: Record<s
 
 function definitionPatch(definition: BuiltInAgentDefinition, input: BuiltInAgentProvisionInput = {}) {
   const adapterType = input.adapterType ?? defaultAdapterType(definition);
-  assertAdapterAllowed(definition, adapterType);
+  assertAdapterAllowed(definition, adapterType, input.adapterConfig);
   return {
+    runner: input.runner,
     name: definition.displayName,
     role: definition.defaultRole,
     title: definition.defaultTitle ?? null,
@@ -778,7 +756,7 @@ async function assertKnownBuiltInAgentModel(
   const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
   if (!model || !hasCompleteAdapterConfig(adapterType, adapterConfig)) return;
 
-  const models = await listAdapterModels(adapterType);
+  const models = await listAdapterModels(agentHarnessType(adapterType, adapterConfig));
   if (models.length === 0 || models.some((candidate) => candidate.id === model)) return;
 
   throw unprocessable(`Model "${model}" is not available for adapter ${adapterType}.`, {
@@ -801,7 +779,7 @@ function builtInAgentNotConfiguredError(state: BuiltInAgentState) {
 }
 
 function hasProvisionSetupInput(input: BuiltInAgentProvisionInput) {
-  return input.adapterType !== undefined || input.adapterConfig !== undefined || input.budgetMonthlyCents !== undefined;
+  return input.adapterType !== undefined || input.adapterConfig !== undefined || input.runner !== undefined || input.budgetMonthlyCents !== undefined;
 }
 
 function rowIsBuiltInAgent(row: typeof agents.$inferSelect, key: string) {
@@ -831,6 +809,7 @@ function isBuiltInAgentMarkerConflict(error: unknown): boolean {
 
 export function builtInAgentService(db: Db) {
   const agentSvc = agentService(db);
+  const agentSvcLifecycle = createAgentLifecycle(db);
   const accessSvc = accessService(db);
   const approvalSvc = approvalService(db);
   const instructionsSvc = agentInstructionsService(db);
@@ -909,13 +888,13 @@ export function builtInAgentService(db: Db) {
       .from(agents)
       .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
     const candidate = rows.find((row) =>
-      definition.allowedAdapterTypes?.includes(row.adapterType)
+      definition.allowedAdapterTypes?.includes(agentHarnessType(row.adapterType, row.adapterConfig))
       && hasCompleteAdapterConfig(row.adapterType, row.adapterConfig)
     );
     if (!candidate) return input;
     return {
       ...input,
-      adapterType: candidate.adapterType,
+      adapterType: agentHarnessType(candidate.adapterType, candidate.adapterConfig),
       adapterConfig: {},
     };
   }
@@ -1429,8 +1408,8 @@ export function builtInAgentService(db: Db) {
   }
 
   async function ensureBuiltInAgentAssignable(agent: Agent) {
-    if (agent.status !== "paused") return agent;
-    const resumed = await agentSvc.resume(agent.id);
+    if (agent.status !== "paused" || ["preparing", "verifying", "resuming"].includes(agent.lifecycleState ?? "")) return agent;
+    const resumed = await agentSvcLifecycle.resumeAgent(agent.id);
     if (!resumed) throw notFound("Built-in agent not found");
     return resumed as Agent;
   }
@@ -1690,7 +1669,7 @@ export function builtInAgentService(db: Db) {
     const [keep, ...duplicates] = markedRows;
     for (const duplicate of duplicates) {
       const openApproval = await approvalSvc.findOpenHireApprovalForAgent(companyId, duplicate.id);
-      await agentSvc.terminate(duplicate.id);
+      await agentSvcLifecycle.terminateAgent(duplicate.id);
       if (openApproval) {
         await approvalSvc.cancel(
           openApproval.id,
@@ -1750,7 +1729,7 @@ export function builtInAgentService(db: Db) {
     companyId: string,
     key: string,
     input: BuiltInAgentProvisionInput = {},
-    options: { isRaceRetry?: boolean } = {},
+    options: { isRaceRetry?: boolean; createdByUserId?: string | null } = {},
   ) {
     const definition = requireBuiltInAgentDefinition(key);
     await ensureCompany(companyId);
@@ -1761,11 +1740,13 @@ export function builtInAgentService(db: Db) {
       && !existingPendingApproval
       && input.adapterType === undefined
       && input.adapterConfig === undefined
-      && hasCompleteAdapterConfig(existing.adapterType, existing.adapterConfig),
+      && input.runner === undefined,
     );
     const resolvedInput = existingPendingApproval || preserveExistingAdapter
       ? input
-      : await defaultProvisionInput(companyId, definition, input);
+      : existing && input.runner !== undefined && input.adapterType === undefined && input.adapterConfig === undefined
+        ? { ...input, adapterType: existing.adapterType, adapterConfig: existing.adapterConfig }
+        : await defaultProvisionInput(companyId, definition, input);
     if (!existingPendingApproval && !preserveExistingAdapter) {
       await assertKnownBuiltInAgentModel(definition, resolvedInput);
     }
@@ -1775,12 +1756,33 @@ export function builtInAgentService(db: Db) {
       };
       if (
         !existingPendingApproval
-        && (resolvedInput.adapterType !== undefined || resolvedInput.adapterConfig !== undefined)
+        && (resolvedInput.adapterType !== undefined || resolvedInput.adapterConfig !== undefined || resolvedInput.runner !== undefined)
       ) {
         const adapterType = resolvedInput.adapterType ?? existing.adapterType;
-        assertAdapterAllowed(definition, adapterType);
-        patch.adapterType = adapterType;
-        patch.adapterConfig = resolvedInput.adapterConfig ?? existing.adapterConfig;
+        const adapterConfig = resolvedInput.adapterConfig ?? existing.adapterConfig;
+        assertAdapterAllowed(definition, adapterType, adapterConfig);
+        const selectedHarness = agentHarnessType(adapterType, adapterConfig);
+        const sameQualifiedHarness = ["codex_local", "claude_local", "opencode_local", "pi_local"].includes(selectedHarness)
+          && agentHarnessType(existing.adapterType, existing.adapterConfig) === selectedHarness;
+        const runner = resolvedInput.runner ?? (sameQualifiedHarness && existing.metadata?.paperclipBuiltInSetupRequired !== true
+          ? agentRunner(existing.adapterType) : undefined);
+        const retainedNative = sameQualifiedHarness && runner === "paperclip" && existing.adapterType === "paperclip_runner";
+        const resolvedAdapterConfig = { ...adapterConfig };
+        if (retainedNative) {
+          for (const field of ["provider", "acpxAgent", "acpxMode"]) {
+            if (existing.adapterConfig[field] !== undefined) resolvedAdapterConfig[field] = existing.adapterConfig[field];
+          }
+        }
+        Object.assign(patch, runner !== undefined || existing.metadata?.paperclipBuiltInSetupRequired === true
+          ? await resolveNewAgentRunnerForCompany(db, companyId, {
+            adapterType: retainedNative ? existing.adapterType : adapterType,
+            adapterConfig: resolvedAdapterConfig, runner,
+            defaultEnvironmentId: existing.defaultEnvironmentId,
+          })
+          : { adapterType, adapterConfig });
+        if (hasCompleteAdapterConfig(patch.adapterType ?? existing.adapterType, patch.adapterConfig ?? existing.adapterConfig)) {
+          patch.metadata = { ...patch.metadata, paperclipBuiltInSetupRequired: false };
+        }
       }
       if (!existingPendingApproval && resolvedInput.budgetMonthlyCents !== undefined) {
         patch.budgetMonthlyCents = resolvedInput.budgetMonthlyCents;
@@ -1811,7 +1813,7 @@ export function builtInAgentService(db: Db) {
       : null;
     let created: Agent;
     try {
-      created = await agentSvc.create(companyId, {
+      created = await agentSvcLifecycle.requestHire(companyId, {
         ...definitionPatch(definition, resolvedInput),
         status: definition.defaultStatus ?? "idle",
         pauseReason: definition.defaultStatus === "paused"
@@ -1819,18 +1821,24 @@ export function builtInAgentService(db: Db) {
           : null,
         pausedAt: definition.defaultStatus === "paused" ? new Date() : null,
         reportsTo,
-        metadata: builtInMetadata(definition),
+        metadata: {
+          ...builtInMetadata(definition),
+          paperclipBuiltInSetupRequired: !hasCompleteAdapterConfig(
+            definitionPatch(definition, resolvedInput).adapterType,
+            definitionPatch(definition, resolvedInput).adapterConfig,
+          ),
+        },
         runtimeConfig: definition.defaultRuntimeConfig ?? {},
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true }) as Agent;
+      }, { allowBuiltInAgentMetadata: true, createdByUserId: options.createdByUserId ?? null }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row first
       // and the partial unique index rejected ours. Re-run once; the winning
       // row now exists, so we take the update path instead of inserting again.
       if (!options.isRaceRetry && isBuiltInAgentMarkerConflict(error)) {
-        return ensure(companyId, key, input, { isRaceRetry: true });
+        return ensure(companyId, key, input, { isRaceRetry: true, createdByUserId: options.createdByUserId });
       }
       throw error;
     }
@@ -1863,7 +1871,7 @@ export function builtInAgentService(db: Db) {
     const definition = requireBuiltInAgentDefinition(key);
     const company = await ensureCompany(companyId);
     if (!company.requireBoardApprovalForNewAgents) {
-      return { state: await ensure(companyId, key, input), approval: null };
+      return { state: await ensure(companyId, key, input, { createdByUserId: actor.requestedByUserId ?? null }), approval: null };
     }
     await assertKnownBuiltInAgentModel(definition, input);
 
@@ -1884,7 +1892,7 @@ export function builtInAgentService(db: Db) {
         };
       }
 
-      const providesAdapterSetup = input.adapterType !== undefined || input.adapterConfig !== undefined;
+      const providesAdapterSetup = input.adapterType !== undefined || input.adapterConfig !== undefined || input.runner !== undefined;
 
       // A built-in row that has never completed adapter setup (incomplete
       // config, i.e. `needs_setup`) is still first-time configuration, not a
@@ -1894,7 +1902,7 @@ export function builtInAgentService(db: Db) {
       // adapterConfig is still empty. Completing that setup applies directly, as
       // it does when board approval is not required, instead of dead-ending on a
       // fresh board-approval requirement the operator can never satisfy.
-      if (providesAdapterSetup && !hasCompleteAdapterConfig(existing.adapterType, existing.adapterConfig)) {
+      if (providesAdapterSetup && (existing.metadata?.paperclipBuiltInSetupRequired === true || !hasCompleteAdapterConfig(existing.adapterType, existing.adapterConfig))) {
         return { state: await ensure(companyId, key, input), approval: null };
       }
 
@@ -1916,16 +1924,22 @@ export function builtInAgentService(db: Db) {
       : null;
     let pending: Agent;
     try {
-      pending = await agentSvc.create(companyId, {
+      pending = await agentSvcLifecycle.requestHire(companyId, {
         ...definitionPatch(definition, input),
         status: "pending_approval",
         reportsTo,
-        metadata: builtInMetadata(definition),
+        metadata: {
+          ...builtInMetadata(definition),
+          paperclipBuiltInSetupRequired: !hasCompleteAdapterConfig(
+            definitionPatch(definition, input).adapterType,
+            definitionPatch(definition, input).adapterConfig,
+          ),
+        },
         runtimeConfig: definition.defaultRuntimeConfig ?? {},
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true }) as Agent;
+      }, { allowBuiltInAgentMetadata: true, createdByUserId: actor.requestedByUserId ?? null }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row (and
       // its own hire approval) first, and the partial unique index rejected
@@ -2078,6 +2092,13 @@ export function builtInAgentService(db: Db) {
     const company = await ensureCompany(companyId);
     let autoEnsured = 0;
     let pendingApprovals = 0;
+    // A fresh company starts with only its own lead agent — the Reflection
+    // Coach and Summarizer are no longer auto-created for new users. They stay
+    // available to enable on demand (via ensure / provision / the built-in
+    // bundle panel). We still reconcile any bundled agent that already exists
+    // (e.g. one an operator enabled) so its instructions/skill/routine keep
+    // tracking stock. Add a key to AUTO_PROVISION_ON_COMPANY_CREATE_KEYS to
+    // restore automatic creation for that definition.
     for (const definition of DEFINITIONS.filter((entry) => entry.bundle)) {
       const existing = await findSingleAgent(companyId, definition);
       const shouldProvision = existing !== null || AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key);

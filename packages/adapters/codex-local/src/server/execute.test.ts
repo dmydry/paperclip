@@ -96,6 +96,7 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
 
   afterEach(async () => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     if (savedCodexHomeEnv === undefined) {
       delete process.env.CODEX_HOME;
     } else {
@@ -129,7 +130,7 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
     );
   }
 
-  async function runTeardown(input: { sandboxAuth: string; hostAuth: string; onProviderStopped?: () => Promise<void> }) {
+  async function runTeardown(input: { sandboxAuth: string; hostAuth: string; onProviderStopped?: () => Promise<void>; withIdentity?: boolean; env?: Record<string, string> }) {
     const rootDir = await mkdtemp(
       path.join(os.tmpdir(), "paperclip-codex-copyback-e2e-"),
     );
@@ -147,8 +148,14 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
     process.env.PAPERCLIP_HOME = path.join(rootDir, "paperclip-home");
     sandboxAuthFixture.bytes = Buffer.from(input.sandboxAuth, "utf8");
 
+    const commandArgs: string[] = [];
     const executionResult = await execute({
       runId: "run-copyback-e2e",
+      ...(input.withIdentity ? {
+        authToken: "assigned-run-token",
+        agentIdentity: { keyId: "sha256:test", publicKeyPem: "public", privateKeyPem: "private" },
+      } : {}),
+      onMeta: async meta => { commandArgs.push(...(meta.commandArgs ?? [])); },
       onProviderStopped: input.onProviderStopped,
       agent: {
         id: "agent-1",
@@ -164,7 +171,7 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
         codexAuthSourceHome: sharedHostHome,
         // Legacy shared runtime paths are normalized onto the per-agent home.
         // The subscription source remains the outbound copy-back destination.
-        env: { CODEX_HOME: sharedHostHome },
+        env: { CODEX_HOME: sharedHostHome, ...input.env },
       },
       context: {
         paperclipWorkspace: {
@@ -188,11 +195,31 @@ describe("codex execute — outbound auth copy-back restore contribution", () =>
     });
 
     return {
+      commandArgs,
       finalHostAuth: await readFile(hostAuthPath, "utf8"),
       finalHostMode: (await lstat(hostAuthPath)).mode & 0o777,
       executionResult,
     };
   }
+
+  it.each([true, false])("delivers configured service tokens to CLI shells while isolating host and provider credentials (identity: %s)", async (withIdentity) => {
+    vi.stubEnv("DATABASE_URL", "postgres://operator:host-password@host/private");
+    vi.stubEnv("HOST_DATABASE_PASSWORD", "host-password");
+    const { commandArgs } = await runTeardown({ sandboxAuth: "{}", hostAuth: "{}", withIdentity,
+      env: { SLACK_BOT_TOKEN: "assigned-tool-token", OPENAI_API_KEY: "provider-key-canary" },
+    });
+    const policy = commandArgs.find(arg => arg.startsWith("shell_environment_policy.include_only="));
+    const keys = policy ? JSON.parse(policy.slice(policy.indexOf("=") + 1)) : [];
+    expect(keys).toContain("SLACK_BOT_TOKEN");
+    if (withIdentity) expect(keys).toEqual(expect.arrayContaining([
+      "PAPERCLIP_API_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY",
+    ]));
+    expect(keys).not.toContain("OPENAI_API_KEY");
+    expect(keys).not.toContain("DATABASE_URL");
+    expect(keys).not.toContain("HOST_DATABASE_PASSWORD");
+    expect(commandArgs.join(" ")).not.toContain("assigned-run-token");
+    expect(commandArgs.join(" ")).not.toContain("assigned-tool-token");
+  });
 
   it("collects stopped-provider instruction edits before a throwing remote restore", async () => {
     const order: string[] = [];

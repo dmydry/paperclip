@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { deriveIssueUserContext } from "../services/issues.ts";
 
 function makeIssue(overrides?: Partial<{
+  createdByAgentId: string | null;
+  originKind: string | null;
   createdByUserId: string | null;
   assigneeUserId: string | null;
   createdAt: Date;
@@ -47,7 +49,7 @@ describe("deriveIssueUserContext", () => {
     expect(context.isUnreadForMe).toBe(false);
   });
 
-  it("does not treat bare issue creation as inbox touch", () => {
+  it("uses issue creation time as fallback touch point for creator", () => {
     const context = deriveIssueUserContext(
       makeIssue({ createdByUserId: "user-1", createdAt: new Date("2026-03-06T09:00:00.000Z") }),
       "user-1",
@@ -58,11 +60,23 @@ describe("deriveIssueUserContext", () => {
       },
     );
 
-    expect(context.myLastTouchAt).toBeNull();
-    expect(context.isUnreadForMe).toBe(false);
+    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T09:00:00.000Z");
+    expect(context.isUnreadForMe).toBe(true);
   });
 
-  it("treats assigned issues with unseen external comments as unread", () => {
+  it("excludes automatic creator attribution from the personal touch time", () => {
+    for (const originKind of ["chat_channel", "routine_execution"]) {
+      const context = deriveIssueUserContext(
+        makeIssue({ originKind, createdByUserId: "user-1" }),
+        "user-1",
+        { myLastCommentAt: null, myLastReadAt: null, lastExternalCommentAt: null },
+      );
+      expect(context.myLastTouchAt).toBeNull();
+      expect(context.isUnreadForMe).toBe(false);
+    }
+  });
+
+  it("uses issue updated time as fallback touch point for assignee", () => {
     const context = deriveIssueUserContext(
       makeIssue({ assigneeUserId: "user-1", updatedAt: new Date("2026-03-06T15:00:00.000Z") }),
       "user-1",
@@ -73,8 +87,8 @@ describe("deriveIssueUserContext", () => {
       },
     );
 
-    expect(context.myLastTouchAt).toBeNull();
-    expect(context.isUnreadForMe).toBe(true);
+    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:00:00.000Z");
+    expect(context.isUnreadForMe).toBe(false);
   });
 
   it("uses latest read timestamp to clear unread without requiring a comment", () => {
@@ -89,42 +103,6 @@ describe("deriveIssueUserContext", () => {
     );
 
     expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T11:30:00.000Z");
-    expect(context.isUnreadForMe).toBe(false);
-  });
-
-  it("still treats an explicit user comment as the latest touch point for an assigned issue", () => {
-    const context = deriveIssueUserContext(
-      makeIssue({
-        assigneeUserId: "user-1",
-        updatedAt: new Date("2026-03-06T09:00:00.000Z"),
-      }),
-      "user-1",
-      {
-        myLastCommentAt: new Date("2026-03-06T12:00:00.000Z"),
-        myLastReadAt: null,
-        lastExternalCommentAt: new Date("2026-03-06T13:00:00.000Z"),
-      },
-    );
-
-    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T12:00:00.000Z");
-    expect(context.isUnreadForMe).toBe(true);
-  });
-
-  it("uses latest read timestamp to clear unread on assigned issues", () => {
-    const context = deriveIssueUserContext(
-      makeIssue({
-        assigneeUserId: "user-1",
-        updatedAt: new Date("2026-03-06T15:00:00.000Z"),
-      }),
-      "user-1",
-      {
-        myLastCommentAt: null,
-        myLastReadAt: new Date("2026-03-06T15:01:00.000Z"),
-        lastExternalCommentAt: new Date("2026-03-06T14:59:00.000Z"),
-      },
-    );
-
-    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:01:00.000Z");
     expect(context.isUnreadForMe).toBe(false);
   });
 

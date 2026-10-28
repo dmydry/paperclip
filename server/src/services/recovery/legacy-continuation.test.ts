@@ -40,6 +40,8 @@ describe("legacy continuation authority", () => {
       { id: "old", contextSnapshot: { dispositionRepairAttempt: 3, dispositionRepairMaxAttempts: 5, dispositionRepairFingerprint: "old-episode" } },
       { id: "old", contextSnapshot: { wakeReason: "finish_successful_run_handoff", handoffAttempt: 1 } },
       { id: "old", contextSnapshot: { source: "issue.productive_terminal_continuation_recovery" } },
+      { id: "old", contextSnapshot: { autoResumeDirtyWorktreeAttempt: 1 } },
+      { id: "old", contextSnapshot: { wakeReason: "dirty_worktree_auto_resume" } },
     ]) expect(decideLegacyContinuation({ ...input, episode: legacyDispositionEpisode(run) }).kind).toBe("exhausted");
   });
   it("keeps replay identity stable while a genuinely new episode gets its own identity", () => {

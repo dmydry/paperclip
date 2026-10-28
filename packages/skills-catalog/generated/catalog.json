@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/skills-catalog",
   "packageVersion": "0.3.1",
-  "generatedAt": "2026-09-11T08:01:32.868Z",
+  "generatedAt": "2026-10-28T00:55:18.886Z",
   "skills": [
     {
       "id": "paperclipai:bundled:docs:doc-maintenance",
@@ -34,9 +34,15 @@
           "kind": "skill",
           "sizeBytes": 4478,
           "sha256": "fb0353386c5e5e5e13bcbb3233f044e3dccecf371f429d6328f26c26d7cb6169"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:2e02299210fd17c1fe1867b4ee8c144a11b6fe1fe481f83b8268cfbaaf10f9aa"
+      "contentHash": "sha256:7f4858e183682f6780adbae4b13bef446687dc80a67d9c930d8173b1befa9f4e"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:issue-triage",
@@ -69,9 +75,15 @@
           "kind": "skill",
           "sizeBytes": 4042,
           "sha256": "df5bdc8bf5e017b7ba5f70a4b5323fad51d0c323278f386580f26cf43ad09160"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:88dc13560371fb364963782cb4f6eeb4090fcde92ee3774479428ed6b90e11c1"
+      "contentHash": "sha256:bb6259142e12146a7e76568100b22d8d5c4f92fe6a7cb72dd777e3c4add5863d"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:reflection-coach",
@@ -104,9 +116,15 @@
           "kind": "skill",
           "sizeBytes": 12028,
           "sha256": "083d5fa8dc43c3ce7747e89c1afb6f6f42d0603a31808bffc5f8e56735f2d865"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:f2592d81f616628a3eba92636616424f2eed82ec22bb504240a58f6be115e407"
+      "contentHash": "sha256:b4cc7a306e33de7a6bf2064db6cd4f991b5aef03733b3a4070f634c5039ad0ef"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:status-card-query",
@@ -139,9 +157,15 @@
           "kind": "skill",
           "sizeBytes": 6368,
           "sha256": "0c6140f51d503cbadc98723ce54c0def48e7e31ea159b0935b8ad6369291498a"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:2b6e53bf8491f027afdbd6961ad84f677cfd385a0a6a73616ea84111ca8886ed"
+      "contentHash": "sha256:c6781ba3f1b60e1f1dc2ab921bbf96b99931eefc2161d00e045c16213d7f5cbf"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:summarize-status",
@@ -174,9 +198,15 @@
           "kind": "skill",
           "sizeBytes": 8877,
           "sha256": "4cb3d177f5d16e3cc2052d2f80e7fb245ab95e79c1e947abdc84cd4ee3d8c61e"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:3e49ee2b8d83d1371fb0f59197bb96c46b64f722540405f46d4a5a756fbe1b89"
+      "contentHash": "sha256:0437b6761d3ef954ecab283fd00788810b9d16fa5b599a98629c24024fbf132d"
     },
     {
       "id": "paperclipai:bundled:paperclip-operations:task-planning",
@@ -185,7 +215,7 @@
       "category": "paperclip-operations",
       "slug": "task-planning",
       "name": "task-planning",
-      "description": "Turn a Paperclip issue or request into a structured implementation plan with child task graph, blockers, owners, and acceptance criteria, then save it as the issue `plan` document.",
+      "description": "Write or revise a useful Paperclip plan with a clear outcome and verification. Use when a plan is requested or uncertainty needs resolving before execution.",
       "path": "catalog/bundled/paperclip-operations/task-planning",
       "entrypoint": "SKILL.md",
       "trustLevel": "markdown_only",
@@ -207,11 +237,17 @@
         {
           "path": "SKILL.md",
           "kind": "skill",
-          "sizeBytes": 6513,
-          "sha256": "d6d4a6f53a50ab7177a86e8b674a91602706fdd063229ae8b7aa485d0e2b4d5e"
+          "sizeBytes": 2004,
+          "sha256": "3d16e92f5b3d90af4ca697ac5c9244f5984651050c8a3ec21ca0b3b0c1f0fa30"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:d5e2fb512356b855258e31021f03b354c668612039e5c8b291cd5221b854d6e6"
+      "contentHash": "sha256:e5fc8dba29622d8bc6aba8dc583406c3258de4556819f8232c2c034c315094a6"
     },
     {
       "id": "paperclipai:bundled:product:paperclip-capsules",
@@ -223,7 +259,7 @@
       "description": "Generate, implement, or review Paperclip capsule visuals. Use for capsule art, agent capsules, heartbeat status capsules, identicons, capsule banks, or brand-usage validation.",
       "path": "catalog/bundled/product/paperclip-capsules",
       "entrypoint": "SKILL.md",
-      "trustLevel": "markdown_only",
+      "trustLevel": "assets",
       "compatibility": "compatible",
       "defaultInstall": false,
       "recommendedForRoles": [
@@ -247,6 +283,42 @@
           "kind": "skill",
           "sizeBytes": 5831,
           "sha256": "dd659ccb46e105336eb00fbe689b1d5531347fc69493c3156390d40ee413c93e"
+        },
+        {
+          "path": "._references",
+          "kind": "other",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._generator-workflows.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._hero-capsule-bank.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._identicon-prototyper.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._individual-status-capsules.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         },
         {
           "path": "references/generator-workflows.md",
@@ -273,7 +345,7 @@
           "sha256": "be1f2eccf96b4d2deefe45b3bc1dd0a3597278472c2ffedadc43c57161e9103d"
         }
       ],
-      "contentHash": "sha256:a2b26cf6895affeeb70c85567a061094450a59bd3c4fdcf28ee65858599ac12c"
+      "contentHash": "sha256:14a4daadf7ef40f0bf65aff1bc3f2bce8e7ec7ae702452f695f2ca499752d133"
     },
     {
       "id": "paperclipai:bundled:product:wireframe",
@@ -309,6 +381,42 @@
           "sha256": "6992047cc97b67211cc8c1183718ab9aa26b8afc34c70d54d20558c215daaf48"
         },
         {
+          "path": "._assets",
+          "kind": "other",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "._references",
+          "kind": "other",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "assets/._site-template.html",
+          "kind": "asset",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "assets/._template-mobile.svg",
+          "kind": "asset",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "assets/._template.svg",
+          "kind": "asset",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
           "path": "assets/site-template.html",
           "kind": "asset",
           "sizeBytes": 14791,
@@ -325,6 +433,24 @@
           "kind": "asset",
           "sizeBytes": 1262,
           "sha256": "63f8adb8eb4b21dea6fd442b9e9312704c419535eb577d4ef0bfb54410fd576b"
+        },
+        {
+          "path": "references/._components.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._examples.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "references/._grid-system.md",
+          "kind": "reference",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         },
         {
           "path": "references/components.md",
@@ -345,7 +471,7 @@
           "sha256": "017260d2216859d57e5fa869e0efc6b88c7ed4d8a8a4f5af04fe89a3ef2445bd"
         }
       ],
-      "contentHash": "sha256:7106d84fc9db2053090f692706e41cfc586e7dd85a44f568e3319c4eefbdde46"
+      "contentHash": "sha256:b1d28dd2989c01efaad034de4e65896734f4033cd76e793e6e1ec2758baf2815"
     },
     {
       "id": "paperclipai:bundled:quality:qa-acceptance",
@@ -378,9 +504,15 @@
           "kind": "skill",
           "sizeBytes": 3861,
           "sha256": "c631b437ab26d104af6cdb963d8f679a9341439041b3cb3ec8835f4ff551b378"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:32372dacaf62e93454b9855968c4eec96456ba78b509f450b3dfaa48e31ef356"
+      "contentHash": "sha256:ad6072ff9842b4c1c7ad0e2c686e2c75c99d350fe54d2503570e30e107cb90cf"
     },
     {
       "id": "paperclipai:bundled:software-development:github-pr-workflow",
@@ -411,9 +543,15 @@
           "kind": "skill",
           "sizeBytes": 3970,
           "sha256": "f498ec4ebb1779dea37adeb1db8a8b22316282798e35ee02e2fc5ff627d7e261"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:90f278c89aa0711be150c1cd2456ca25620d02f36995b113ca9837d756a37f6c"
+      "contentHash": "sha256:761d71e9f55135f7f9ccb3a5ea77c8aa02d821c89bfcc10e2bca8307b8efc7b3"
     },
     {
       "id": "paperclipai:optional:browser:agent-browser",
@@ -446,9 +584,15 @@
           "kind": "skill",
           "sizeBytes": 5133,
           "sha256": "362f7b9d02297782bc6f0c093f495b8a0304a75bcf4b42e5c280a42b1f757b7d"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:eabb2c9f7b5e1a27ebb1e05a711d61433a266478154cd671a685e99e67aadea2"
+      "contentHash": "sha256:f925f784108a003b00f33fbe9d084bfe739eaec5edeba4cd9723008bb3edb8a0"
     },
     {
       "id": "paperclipai:optional:content:release-announcement",
@@ -481,9 +625,15 @@
           "kind": "skill",
           "sizeBytes": 6945,
           "sha256": "d745cca96350518fabae14f5c407d779e1df2c5d091b5b4a5c55bb888b569e5f"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:efe8ea89b552df95222609867c9c75f1b40e16f457d34e7e4a124f54daa33efa"
+      "contentHash": "sha256:e4bd277eddbf64a9eb8f909f710eea5c28ea5be6ad0b66eb537d06be5efbd355"
     },
     {
       "id": "paperclipai:optional:content:simplified-english",
@@ -517,9 +667,15 @@
           "kind": "skill",
           "sizeBytes": 1578,
           "sha256": "a0f7385599873910e2fabf400346016a07dacbc7ece27c0e3616ae8fd94ebfbb"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:642321f40d51e0125df05c6fbace49aeb07ec30392058756909c259c9c5eac6a"
+      "contentHash": "sha256:d545d20ce78937aada087b91ab579a0313050289295d6fd0e55903779897f2c8"
     },
     {
       "id": "paperclipai:optional:finance:ramp",
@@ -554,9 +710,15 @@
           "kind": "skill",
           "sizeBytes": 7016,
           "sha256": "698cd69ebf2f2481ed83c8e9477b56ae78288cc4c751d7d35f649ff2483802a3"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:276d85e98a4732f278204e26438aa95fde158dd2d15c1e427c4c7c7d492e769d"
+      "contentHash": "sha256:ef360840eab73f5ba7c290558084187c480e0a88a2c3c90dcb459d3f3bc7d468"
     },
     {
       "id": "paperclipai:optional:product:design-critique",
@@ -589,9 +751,15 @@
           "kind": "skill",
           "sizeBytes": 4851,
           "sha256": "022e619baf6cc25725946279cb8052d22af090dd6cd6dc8c20f17867f71a5d8e"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
         }
       ],
-      "contentHash": "sha256:429f94df398a0697042b5bbe4755b1ff1a230aa5f41d99118ad37493ac65d21c"
+      "contentHash": "sha256:6c8c667168e76b33edb239287c8604e4eae6c088421688bacaef8603e0afd1a1"
     },
     {
       "id": "paperclipai:optional:research:last30days",
@@ -1124,7 +1292,7 @@
       "description": "Prepare MCP/vendor integrations through cited research, a content PR, exact-revision human approval, and one governed Paperclip connector PR per approved connection. Use for new integration research and delivery; not for ad hoc connector coding that bypasses the playbooks.",
       "path": "catalog/optional/software-development/prepare-mcp-integration",
       "entrypoint": "SKILL.md",
-      "trustLevel": "markdown_only",
+      "trustLevel": "assets",
       "compatibility": "compatible",
       "defaultInstall": false,
       "recommendedForRoles": [
@@ -1153,13 +1321,31 @@
           "sha256": "5278d288a0cbfe10fdda4ef3d99cf61e6ed068f4b6c1282406b0e001c9f45253"
         },
         {
+          "path": "._examples",
+          "kind": "other",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "._SKILL.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
+          "path": "examples/._notion-mcp-research-gate.md",
+          "kind": "markdown",
+          "sizeBytes": 163,
+          "sha256": "5aa5b163383c634accc0f254eff70df503fb027634b8267e7e708eadc1fee67f"
+        },
+        {
           "path": "examples/notion-mcp-research-gate.md",
           "kind": "markdown",
           "sizeBytes": 1900,
           "sha256": "944b13ac67c06c65643eb236e856f1479106749861535648d29334f84cf1b50b"
         }
       ],
-      "contentHash": "sha256:84f2a28d7d004393719684f2b435e5ee01ddc58591e0dfeb73d72c7605db7f49"
+      "contentHash": "sha256:8b61b6549fc457ed2972d92d5f514a51d3643390600861b41af7c5eaac9fcb9e"
     }
   ]
 }

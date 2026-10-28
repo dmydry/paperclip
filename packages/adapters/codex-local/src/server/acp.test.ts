@@ -780,11 +780,16 @@ describe("codex_local ACP lane", () => {
     expect(runtimes[0]?.setConfigInputs).toEqual([]);
     expect(meta[0]?.commandNotes?.join("\n")).toContain("Prepared ACPX Codex skill home");
     expect(meta[0]?.env?.CODEX_HOME).toBe(path.join(root, "codex-home"));
-    expect(JSON.parse(String(meta[0]?.env?.CODEX_CONFIG))).toEqual({
+    expect(JSON.parse(String(meta[0]?.env?.CODEX_CONFIG))).toMatchObject({
       model: "gpt-5.5",
       model_reasoning_effort: "high",
       service_tier: "fast",
       features: { fast_mode: true },
+      shell_environment_policy: {
+        inherit: "all",
+        ignore_default_excludes: true,
+        include_only: expect.arrayContaining(["PATH", "CODEX_HOME"]),
+      },
     });
   });
 
@@ -978,7 +983,7 @@ describe("codex_local ACP lane", () => {
     expect(Object.keys(meta[0]?.env ?? {}).filter((key) => key.startsWith("XDG_"))).toEqual([]);
   });
 
-  it("copies a strictly-newer sandbox Codex auth back to the shared host on teardown", async () => {
+  it.each([false, true])("copies newer subscription auth back despite an explicitly suppressed host API key (%s)", async (hostKeyPresent) => {
     const root = await makeTempRoot("paperclip-codex-acp-copyback-newer-");
     const localCwd = path.join(root, "worktree");
     const remoteCwd = path.join(root, "remote-workspace");
@@ -1002,6 +1007,8 @@ describe("codex_local ACP lane", () => {
       { mode: 0o600 },
     );
     process.env.CODEX_HOME = sharedHostHome;
+    if (hostKeyPresent) process.env.OPENAI_API_KEY = "fixture-host-api-key";
+    else delete process.env.OPENAI_API_KEY;
 
     const execute = createCodexAcpExecutor({
       createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never,
@@ -1013,7 +1020,7 @@ describe("codex_local ACP lane", () => {
           cwd: localCwd,
           agentCommand: "node ./fake-acp.js",
           stateDir: path.join(root, "state"),
-          env: { CODEX_HOME: sourceHome },
+          env: { CODEX_HOME: sourceHome, OPENAI_API_KEY: "" },
           promptTemplate: "Do the assigned work.",
         },
         context: {
@@ -1427,6 +1434,12 @@ describe("codex_local ACP lane", () => {
 });
 
 describe("resolveCodexAcpBillingIdentity", () => {
+  it.each([["openrouter", "api_key", "openrouter"], ["custom", "api_key", "unknown"], ["local", "none", "unknown"]])("classifies managed %s/%s independently of host authentication", (kind, auth, biller) => {
+    expect(resolveCodexAcpBillingIdentity({ config: {
+      managedAiRouting: { kind, auth },
+      env: { OPENAI_API_KEY: "", PAPERCLIP_AI_PROVIDER_KEY: auth === "none" ? "" : "fixture" },
+    } })).toEqual({ provider: "openai", biller, billingType: "api" });
+  });
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
   const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
 

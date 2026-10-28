@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { hoistModuleGraph } from "./helpers/hoist-module-graph.js";
 
 const mockAgentService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -57,7 +58,6 @@ const mockEnvironmentService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
 const mockFindServerAdapter = vi.hoisted(() => vi.fn());
-const mockFindActiveServerAdapter = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -86,45 +86,10 @@ vi.mock("../services/environments.js", () => ({
 }));
 
 vi.mock("../adapters/index.js", () => ({
-  findActiveServerAdapter: mockFindActiveServerAdapter,
   findServerAdapter: mockFindServerAdapter,
   findActiveServerAdapter: mockFindServerAdapter,
   listAdapterModels: vi.fn(),
 }));
-
-function registerModuleMocks() {
-  vi.doMock("../services/index.js", () => ({
-    agentService: () => mockAgentService,
-    agentInstructionsService: () => mockAgentInstructionsService,
-    accessService: () => mockAccessService,
-    approvalService: () => ({}),
-    builtInAgentService: () => mockBuiltInAgentService,
-    companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
-    budgetService: () => ({}),
-    heartbeatService: () => ({}),
-    issueApprovalService: () => ({}),
-    issueService: () => ({}),
-    logActivity: mockLogActivity,
-    secretService: () => mockSecretService,
-    syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
-    workspaceOperationService: () => ({}),
-  }));
-
-  vi.doMock("../services/secrets.js", () => ({
-    secretService: () => mockSecretService,
-  }));
-
-  vi.doMock("../services/environments.js", () => ({
-    environmentService: () => mockEnvironmentService,
-  }));
-
-  vi.doMock("../adapters/index.js", () => ({
-    findActiveServerAdapter: mockFindActiveServerAdapter,
-    findServerAdapter: mockFindServerAdapter,
-    findActiveServerAdapter: mockFindServerAdapter,
-    listAdapterModels: vi.fn(),
-  }));
-}
 
 function boardActor() {
   return {
@@ -136,19 +101,27 @@ function boardActor() {
   };
 }
 
-async function createApp(actor: Record<string, unknown> = boardActor(), db: Record<string, unknown> = {}) {
+const routeModules = hoistModuleGraph(() => {
+  vi.doUnmock("../routes/agents.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/index.js");
+}, async () => {
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
   ]);
+  return { agentRoutes, errorHandler };
+});
+
+async function createApp(actor: Record<string, unknown> = boardActor(), db: Record<string, unknown> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(db as any));
-  app.use(errorHandler);
+  app.use("/api", routeModules.value.agentRoutes(db as any));
+  app.use(routeModules.value.errorHandler);
   return app;
 }
 
@@ -215,19 +188,14 @@ function makeReflectionCoachAgent(overrides: Record<string, unknown> = {}) {
 
 describe("agent instructions bundle routes", () => {
   beforeEach(() => {
-    vi.resetModules();
-    vi.doUnmock("../routes/agents.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../middleware/index.js");
-    registerModuleMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId: string, config: Record<string, unknown>) => config);
     mockAuthorizeInstructionRead.mockImplementation(async (_db, actor) => actor);
     mockInstructionRevisions.readCurrent.mockResolvedValue(null);
     mockInstructionWorkingCopies.acknowledgeExplicitSave.mockResolvedValue(undefined);
     mockInstructionRevisions.commit.mockResolvedValue({ revision: { id: "33333333-3333-4333-8333-333333333333", entryFile: "AGENTS.md", byteLength: 18 }, content: "# Updated Agent\n", changed: true, materialization: "current" });
     mockBuiltInAgentService.ensureCompanyDefaultAgentGrants.mockResolvedValue(0);
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
-    mockFindActiveServerAdapter.mockReturnValue(null);
     mockFindServerAdapter.mockImplementation((_type: string) => ({ type: _type }));
     mockAccessService.decide.mockResolvedValue({
       allowed: true,
@@ -951,4 +919,11 @@ describe("agent instructions bundle routes", () => {
     expect(res.body.adapterConfig.instructionsEntryFile).toBeUndefined();
     expect(res.body.adapterConfig.instructionsFilePath).toBeUndefined();
   });
+});
+
+vi.mock("../services/agent-lifecycle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/agent-lifecycle.js")>();
+  return { ...actual, createAgentLifecycle: () => ({
+    requestHire: (...args: unknown[]) => mockAgentService.create(...args),
+  }) };
 });
