@@ -78,7 +78,7 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
   async function seed() {
     const company = await db.insert(companies).values({
       name: "Attribution Company",
-      issueCounter: 2,
+      issueCounter: 3,
       issuePrefix: `AT${randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase()}`,
     }).returning().then((rows) => rows[0]!);
     const [actorAgent, targetAgent] = await db.insert(agents).values(["Actor", "Target"].map((name) => ({
@@ -122,6 +122,7 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
       {
         companyId: company.id,
         identifier: `${company.issuePrefix}-1`,
+        issueNumber: 1,
         title: "Source issue",
         status: "in_progress" as const,
         priority: "medium" as const,
@@ -130,6 +131,7 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
       {
         companyId: company.id,
         identifier: `${company.issuePrefix}-2`,
+        issueNumber: 2,
         title: "Foreign issue",
         status: "done" as const,
         priority: "medium" as const,
@@ -150,6 +152,7 @@ describeEmbeddedPostgres("issue comment attribution and patch audit routes", () 
     const childIssue = await db.insert(issues).values({
       companyId: company.id,
       identifier: `${company.issuePrefix}-3`,
+      issueNumber: 3,
       title: "Direct child handoff",
       status: "done" as const,
       priority: "medium" as const,

@@ -409,6 +409,7 @@ describe("agent routes adapter validation", () => {
         .send({
           name: "Codex Agent",
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {},
         }),
     );
@@ -528,6 +529,7 @@ describe("agent routes adapter validation", () => {
         .send({
           name: "Shared Codex",
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {
             env: {
               CODEX_HOME: sharedHome,

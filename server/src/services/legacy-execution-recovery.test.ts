@@ -75,8 +75,8 @@ const gated = {
   },
 };
 
-it("does not turn a proven pre-dispatch gate into an ambiguous provider interruption", () => {
-  expect(legacyExecutionNeedsReconciliation(gated)).toBe(false);
+it("requires durable dispatch evidence instead of trusting a pre-dispatch row receipt alone", () => {
+  expect(legacyExecutionNeedsReconciliation(gated)).toBe(true);
 });
 
 it.each([

@@ -1841,8 +1841,10 @@ describe("agent issue mutation checkout ownership", () => {
 
     const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Legacy update" });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(res.body.details?.code).toBe("issue_write_not_visible");
+    // A denied read precedes the write gate; do not reveal the issue through
+    // a more specific mutation denial to an actor that cannot see it.
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
+    expect(res.body).toEqual({ error: "Issue not found" });
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });

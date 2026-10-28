@@ -1152,7 +1152,8 @@ describe("agent skill routes", () => {
     expect(returnedAgent.adapterConfig).not.toHaveProperty("promptTemplate");
   });
 
-  it("materializes minimal default instructions for non-CEO agents with no prompt template", async () => {
+  it("materializes the current default instruction bundle for non-CEO agents with no prompt template", async () => {
+    const defaultInstructions = await readFile(new URL("../onboarding-assets/default/AGENTS.md", import.meta.url), "utf8");
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/agents")
       .send({
@@ -1173,7 +1174,7 @@ describe("agent skill routes", () => {
           adapterType: "claude_local",
         }),
         expect.objectContaining({
-          "AGENTS.md": "You are an agent in a Paperclip company.\n",
+          "AGENTS.md": defaultInstructions,
         }),
         { entryFile: "AGENTS.md", replaceExisting: false },
       );

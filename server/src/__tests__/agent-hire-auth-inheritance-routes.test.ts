@@ -454,9 +454,11 @@ describeEmbeddedPostgres("hired agent provider credential inheritance", () => {
       name: "Codex Shared Home Child",
       role: "engineer",
       adapterType: "codex_local",
+      runner: "legacy",
     });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.agent.adapterType).toBe("codex_local");
     const codexHome = childEnvOf(res).CODEX_HOME as { type: string; value: string } | undefined;
     expect(codexHome?.type).toBe("plain");
     expect(codexHome?.value).toContain(path.join("companies", companyId, "agents", res.body.agent.id, "codex-home"));

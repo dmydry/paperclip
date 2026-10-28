@@ -80,6 +80,7 @@ import {
   evaluateCodexCredentialReadiness,
   isManagedCodexHomePath,
   pathExists,
+  prepareManagedCodexHome,
   resolveCodexAuthSourceHomeDir,
   resolveManagedCodexAgentHomeDir,
   resolveManagedCodexHomeDir,
@@ -696,7 +697,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       apiKey: configuredOpenAiApiKey,
     });
   }
-  const skillSourceHome = configuredCodexHome;
+  // Normalizing a runtime path must not turn a copied first-run config into
+  // the authority for later source edits/removals or subscription selection.
+  const skillSourceHome = requestedHomeIsShared || requestedCodexHome === resolveManagedCodexHomeDir(process.env, agent.companyId)
+    ? requestedCodexHome
+    : configuredCodexHome;
   const connectorSourceHome = skillSourceHome;
   const connectorSkillDigest = typeof config.paperclipConnectorSkillDigest === "string"
     && /^[a-f0-9]{64}$/.test(config.paperclipConnectorSkillDigest) ? config.paperclipConnectorSkillDigest : null;
@@ -713,7 +718,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     })).digest("hex")
     : connectorSkillDigest;
   const runtimeCredentialHome = runtimeSkillDigest
-    ? skillSourceHome ?? defaultCodexHome
+    ? !config.managedAiConnection && authSourceCodexHome
+      ? resolvedAuthSourceCodexHome
+      : skillSourceHome ?? await prepareManagedCodexHome(authSourceEnv, onLog, agent.companyId, {
+        apiKey: configuredOpenAiApiKey,
+      })
     : null;
   if (runtimeSkillDigest) {
     const credentialHome = runtimeCredentialHome!;
@@ -731,8 +740,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     })).digest("hex");
     // Different authorized versions/assignments get separate homes, including
     // session state. Previously permitted private links cannot survive revocation.
-    configuredCodexHome = path.join(resolveManagedCodexHomeDir(process.env, agent.companyId),
-      connectorSkillDigest ? "connector-runtimes" : "skill-runtimes", agent.id, runtimeSkillDigest);
+    configuredCodexHome = path.join(defaultCodexHome,
+      connectorSkillDigest ? "connector-runtimes" : "skill-runtimes", runtimeSkillDigest);
   }
   if (!executionTargetIsRemote) {
     await ensureAbsoluteDirectory(cwd, { createIfMissing: true });

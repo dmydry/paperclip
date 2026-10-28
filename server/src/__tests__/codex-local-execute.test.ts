@@ -409,8 +409,13 @@ describe("codex execute", () => {
         "company-1",
         "agents",
       );
-      const alphaHome = path.join(agentsRoot, "agent-alpha", "codex-home");
-      const betaHome = path.join(agentsRoot, "agent-beta", "codex-home");
+      const alphaCapture = JSON.parse(await fs.readFile(path.join(root, "capture-agent-alpha.json"), "utf8")) as CapturePayload;
+      const betaCapture = JSON.parse(await fs.readFile(path.join(root, "capture-agent-beta.json"), "utf8")) as CapturePayload;
+      const alphaHome = alphaCapture.codexHome!;
+      const betaHome = betaCapture.codexHome!;
+      expect(alphaHome).toContain(path.join(agentsRoot, "agent-alpha", "codex-home", "skill-runtimes"));
+      expect(betaHome).toContain(path.join(agentsRoot, "agent-beta", "codex-home", "skill-runtimes"));
+      expect(alphaHome).not.toBe(betaHome);
       expect(await fs.readFile(path.join(alphaHome, "skills", "alpha", "SKILL.md"), "utf8")).toBe("# alpha\n");
       await expect(fs.access(path.join(alphaHome, "skills", "beta"))).rejects.toThrow();
       expect(await fs.readFile(path.join(betaHome, "skills", "beta", "SKILL.md"), "utf8")).toBe("# beta\n");
@@ -1998,9 +2003,10 @@ process.exit(1);
     process.env.PAPERCLIP_HOME = path.join(root, "paperclip");
     process.env.PAPERCLIP_INSTANCE_ID = "connectors";
     process.env.CODEX_HOME = sourceHome;
-    const invoke = async (agentId: string, digest: string | null, source = skillSource, connectorSkillInstructions = "") => {
+    const invoke = async (agentId: string, digest: string | null, source = skillSource, connectorSkillInstructions = "", authSourceOverride?: string) => {
       const config = {
         engine: "cli", command, cwd: workspace,
+        ...(authSourceOverride ? { codexAuthSourceHome: authSourceOverride } : {}),
         env: { ...(explicitHome ? { CODEX_HOME: sourceHome } : {}), PAPERCLIP_TEST_CAPTURE_PATH: capture,
           PAPERCLIP_CODEX_PROVIDERS: JSON.stringify({ providers: { test_gateway: {
             name: "Fixture gateway", base_url: "https://gateway.example/v1", wire_api: "responses",
@@ -2053,7 +2059,7 @@ process.exit(1);
       if (!explicitHome) {
         // A promoted company login can differ from the host's default account.
         // Digest and seeding must use that same effective credential source.
-        const companyHome = path.resolve(first.codexHome!, "../../..");
+        const companyHome = path.join(process.env.PAPERCLIP_HOME!, "instances", "connectors", "companies", "company-1", "codex-home");
         await fs.unlink(path.join(companyHome, "auth.json"));
         const originalAccount = JSON.stringify({ tokens: { account_id: "company-account-one", access_token: "test-token-one" } });
         await fs.writeFile(path.join(companyHome, "auth.json"), originalAccount);
@@ -2076,6 +2082,19 @@ process.exit(1);
         const settingsRemoved = await invoke("agent-1", "a".repeat(64));
         expect(settingsRemoved.codexConfigContents).not.toContain('new-selected-server');
       }
+
+      const selectedSource = path.join(root, "explicit-subscription-source");
+      await fs.mkdir(selectedSource);
+      await fs.writeFile(path.join(selectedSource, "auth.json"), JSON.stringify({ tokens: { account_id: "explicit-subscription", access_token: "fixture-selected-token" } }));
+      await fs.writeFile(path.join(selectedSource, "config.toml"), '[mcp_servers.selected]\ncommand = "selected-subscription-server"\n');
+      const selected = await invoke("agent-1", "a".repeat(64), skillSource, "", selectedSource);
+      expect(await fs.realpath(path.join(selected.codexHome!, "auth.json"))).toBe(await fs.realpath(path.join(selectedSource, "auth.json")));
+      expect(selected.codexConfigContents).toContain('selected-subscription-server');
+      expect(await fs.readFile(path.join(sourceHome, "auth.json"), "utf8")).toBe(fakeCodexAuthJson);
+      await fs.unlink(path.join(selectedSource, "config.toml"));
+      const selectedRemoved = await invoke("agent-1", "a".repeat(64), skillSource, "", selectedSource);
+      expect(selectedRemoved.codexHome).not.toBe(selected.codexHome);
+      expect(selectedRemoved.codexConfigContents).not.toContain('selected-subscription-server');
 
     } finally {
       for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
