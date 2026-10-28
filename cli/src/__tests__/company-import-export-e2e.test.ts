@@ -266,16 +266,22 @@ async function waitForServer(
   output: { stdout: string[]; stderr: string[] },
 ) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 30_000) {
-    if (child.exitCode !== null) {
+  // This boots the complete source server and migrates an empty database, not
+  // just the CLI. Allow cold imports on a bounded Linux worker, while retaining
+  // an explicit readiness deadline and failing immediately on child exit.
+  while (Date.now() - startedAt < 120_000) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
         `paperclipai run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
       );
     }
 
     try {
-      const res = await fetch(`${apiBase}/api/health`);
-      if (res.ok) return;
+      const res = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(1_000) });
+      if (res.ok && (await res.json() as { status?: string }).status === "ok") {
+        console.info(`CLI e2e server ready after ${Date.now() - startedAt}ms`);
+        return;
+      }
     } catch {
       // Server is still starting.
     }
@@ -340,7 +346,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     });
 
     await waitForServer(apiBase, child, output);
-  }, 60_000);
+  }, 150_000);
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
@@ -399,7 +405,9 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
           name: "Export Engineer",
           role: "engineer",
           adapterType: "claude_local",
+          runner: "legacy",
           adapterConfig: {},
+          runtimeConfig: { heartbeat: { enabled: false } },
           instructionsBundle: {
             files: {
               "AGENTS.md": "You verify company portability.",
@@ -408,6 +416,14 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         }),
       },
     );
+
+    // Portability, not provider execution, is under test. Event-driven task
+    // assignment must not wake a real adapter even with the scheduler disabled.
+    await api(apiBase, `/api/agents/${sourceAgent.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "paused" }),
+    });
 
     const sourceProject = await api<{ id: string; name: string }>(
       apiBase,
