@@ -145,24 +145,31 @@ function hasGithubPrWorkflowSkill(desiredSkills: string[]) {
   });
 }
 
-export function requiresIsolatedWorkspaceGuard(input: {
+export async function requiresIsolatedWorkspaceGuard(input: {
   executionWorkspaceMode: ReturnType<typeof resolveExecutionWorkspaceMode>;
+  requestedStrategy: "git_worktree" | "project_primary" | "adapter_managed" | "cloud_sandbox";
   resolvedWorkspace: { cwd: string };
-  executionWorkspace: Pick<RealizedExecutionWorkspace, "cwd" | "strategy" | "worktreePath">;
+  executionWorkspace: Pick<RealizedExecutionWorkspace, "cwd" | "strategy" | "worktreePath" | "branchName">;
   isolatedTaskDirectoryCwd?: string | null;
 }) {
   if (input.executionWorkspaceMode !== "isolated_workspace") return false;
   // Task directories and private fresh clones are validated before this boundary.
-  if (
-    input.isolatedTaskDirectoryCwd &&
+  if (input.isolatedTaskDirectoryCwd) return !(
     input.executionWorkspace.strategy === "project_primary" &&
     !input.executionWorkspace.worktreePath &&
     path.resolve(input.executionWorkspace.cwd) === path.resolve(input.isolatedTaskDirectoryCwd) &&
     path.resolve(input.resolvedWorkspace.cwd) === path.resolve(input.isolatedTaskDirectoryCwd)
-  ) return false;
-  if (input.executionWorkspace.strategy !== "git_worktree") return true;
-  if (!input.executionWorkspace.worktreePath) return true;
-  return path.resolve(input.executionWorkspace.cwd) === path.resolve(input.resolvedWorkspace.cwd);
+  );
+  if (input.requestedStrategy !== "git_worktree") return false;
+  // Retained strategy metadata can lag the physical task worktree. Verify Git
+  // identity, not mode/strategy labels or equality with the resolver's anchor.
+  const gitFile = await fs.lstat(path.join(input.executionWorkspace.cwd, ".git")).catch(() => null);
+  if (!gitFile?.isFile()) return true;
+  const inspection = await inspectManagedGitWorktreeBranch({
+    worktreePath: input.executionWorkspace.cwd,
+    expectedBranchName: input.executionWorkspace.branchName,
+  });
+  return !inspection.valid || inspection.worktreePath === inspection.repoRoot;
 }
 
 export function requiresPushCapabilityPreflight(input: {

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { agents } from "@paperclipai/db";
 import { sessionCodec as codexSessionCodec } from "@paperclipai/adapter-codex-local/server";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
@@ -3441,9 +3441,21 @@ describe("reconcileReusedExecutionWorkspaceProjectWorkspaceId", () => {
 
 
 describe("requiresIsolatedWorkspaceGuard", () => {
-  it("allows an explicitly preflighted repository-free task directory", () => {
-    expect(requiresIsolatedWorkspaceGuard({
+  let root: string, source: string, worktree: string;
+  beforeAll(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-isolation-guard-"));
+    source = path.join(root, "source");
+    worktree = path.join(root, "task");
+    await execFile("git", ["init", "--initial-branch=main", source]);
+    await execFile("git", ["-C", source, "-c", "user.name=Guard test", "-c", "user.email=guard@example.test", "commit", "--allow-empty", "-m", "source"]);
+    await execFile("git", ["-C", source, "worktree", "add", "-b", "task", worktree]);
+  });
+  afterAll(async () => { if (root) await fs.rm(root, { recursive: true, force: true }); });
+
+  it("allows an explicitly preflighted repository-free task directory", async () => {
+    expect(await requiresIsolatedWorkspaceGuard({
       executionWorkspaceMode: "isolated_workspace",
+      requestedStrategy: "git_worktree",
       resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/isolated-task" }),
       executionWorkspace: buildRealizedWorkspace({
         cwd: "/tmp/isolated-task", strategy: "project_primary", worktreePath: null,
@@ -3452,9 +3464,10 @@ describe("requiresIsolatedWorkspaceGuard", () => {
     })).toBe(false);
   });
 
-  it.each(["realized", "resolved"])("rejects a %s directory that differs from the task binding", (mismatch) => {
-    expect(requiresIsolatedWorkspaceGuard({
+  it.each(["realized", "resolved"])("rejects a %s directory that differs from the task binding", async (mismatch) => {
+    expect(await requiresIsolatedWorkspaceGuard({
       executionWorkspaceMode: "isolated_workspace",
+      requestedStrategy: "git_worktree",
       resolvedWorkspace: buildResolvedWorkspace({ cwd: mismatch === "resolved" ? "/tmp/shared" : "/tmp/isolated-task" }),
       executionWorkspace: buildRealizedWorkspace({
         cwd: mismatch === "realized" ? "/tmp/shared" : "/tmp/isolated-task", strategy: "project_primary", worktreePath: null,
@@ -3463,34 +3476,67 @@ describe("requiresIsolatedWorkspaceGuard", () => {
     })).toBe(true);
   });
 
-  it("flags isolated-mode runs that stayed on the base project clone", () => {
+  it.each(["project_primary", "git_worktree"] as const)("rejects a requested Git worktree that stayed on the source despite %s metadata", async (strategy) => {
     expect(
-      requiresIsolatedWorkspaceGuard({
+      await requiresIsolatedWorkspaceGuard({
         executionWorkspaceMode: "isolated_workspace",
-        resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
+        requestedStrategy: "git_worktree",
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: source }),
         executionWorkspace: buildRealizedWorkspace({
-          cwd: "/tmp/project",
-          strategy: "project_primary",
-          worktreePath: null,
+          cwd: source, strategy, worktreePath: strategy === "git_worktree" ? worktree : null,
         }),
       }),
     ).toBe(true);
   });
 
-  it("allows isolated-mode runs that realized a task worktree", () => {
+  it.each(["project_primary", "adapter_managed", "cloud_sandbox"] as const)("leaves explicitly selected %s to upstream validation", async requestedStrategy => {
+    expect(await requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace", requestedStrategy,
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: source }),
+      executionWorkspace: buildRealizedWorkspace({ cwd: source, strategy: "project_primary", worktreePath: null }),
+    })).toBe(false);
+  });
+
+  it.each([false, true])("allows a verified task worktree, including when the resolver already anchors to it (%s)", async reused => {
     expect(
-      requiresIsolatedWorkspaceGuard({
+      await requiresIsolatedWorkspaceGuard({
         executionWorkspaceMode: "isolated_workspace",
-        resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
-        executionWorkspace: buildRealizedWorkspace(),
+        requestedStrategy: "git_worktree",
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: reused ? worktree : source }),
+        executionWorkspace: buildRealizedWorkspace({ cwd: worktree, worktreePath: worktree, branchName: "task" }),
       }),
     ).toBe(false);
   });
 
-  it("does not guard shared-workspace runs", () => {
+  it("accepts retained project_primary metadata only after verifying a real linked worktree", async () => {
+    expect(await requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace", requestedStrategy: "git_worktree",
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: worktree }),
+      executionWorkspace: buildRealizedWorkspace({ cwd: worktree, strategy: "project_primary", worktreePath: null, branchName: "task" }),
+    })).toBe(false);
+  });
+
+  it("rejects a retained worktree on the wrong branch", async () => {
+    expect(await requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace", requestedStrategy: "git_worktree",
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: worktree }),
+      executionWorkspace: buildRealizedWorkspace({ cwd: worktree, worktreePath: worktree, branchName: "other-task" }),
+    })).toBe(true);
+  });
+
+  it("rejects a plain directory even when metadata claims a Git worktree", async () => {
+    expect(await requiresIsolatedWorkspaceGuard({
+      executionWorkspaceMode: "isolated_workspace", requestedStrategy: "git_worktree",
+      resolvedWorkspace: buildResolvedWorkspace({ cwd: source }),
+      executionWorkspace: buildRealizedWorkspace({ cwd: root, worktreePath: root }),
+    })).toBe(true);
+  });
+
+  it("does not guard shared-workspace runs", async () => {
     expect(
-      requiresIsolatedWorkspaceGuard({
+      await requiresIsolatedWorkspaceGuard({
         executionWorkspaceMode: "shared_workspace",
+        requestedStrategy: "git_worktree",
         resolvedWorkspace: buildResolvedWorkspace({ cwd: "/tmp/project" }),
         executionWorkspace: buildRealizedWorkspace({
           cwd: "/tmp/project",

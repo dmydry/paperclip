@@ -753,10 +753,11 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
       if (wake) wake.executionContinuation = continuation;
     }
   }
-  // Native/plugin providers own remote workspace isolation; legacy repo runs may
+  // Native/plugin providers own isolation; a legacy Git-worktree request may
   // not silently fall back to the source checkout.
-  if (!pluginPrepared && agent.adapterType !== "paperclip_runner" && requiresIsolatedWorkspaceGuard({
+  if (!pluginPrepared && agent.adapterType !== "paperclip_runner" && await requiresIsolatedWorkspaceGuard({
     executionWorkspaceMode: effectiveExecutionWorkspaceMode,
+    requestedStrategy: latestWorkspaceStrategyType,
     resolvedWorkspace,
     executionWorkspace,
     isolatedTaskDirectoryCwd: useIsolatedTaskDirectory ? resolvedWorkspace.cwd : validatedFreshWorkspaceCwd,
