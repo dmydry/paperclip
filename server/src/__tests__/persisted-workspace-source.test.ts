@@ -91,6 +91,65 @@ describe("persisted Git workspace source", () => {
     expect(await resolvePersistedGitWorkspaceSource(input)).toBe(original);
   });
 
+  it.each([
+    ["https://gitlab.com/balibikehouse/bikehouse-front-v2.git", "git@gitlab.com:balibikehouse/bikehouse-front-v2.git"],
+    ["https://gitlab.com/group/subgroup/repo.git", "ssh://git@gitlab.com/group/subgroup/repo"],
+    ["https://github.com/dmydry/paperclip", "git@github.com:dmydry/paperclip.git"],
+    ["git@github.com:dmydry/paperclip.git", "https://github.com/dmydry/paperclip.git"],
+  ])("accepts equivalent hosted clone transports (%s, %s)", async (recorded, observed) => {
+    const { original, worktree, input } = await fixture();
+    input.workspace.repoUrl = recorded;
+    await exec("git", ["-C", original, "remote", "set-url", "origin", observed]);
+    expect(await resolvePersistedGitWorkspaceSource(input)).toBe(original);
+    expect(await fs.readFile(path.join(worktree, "retained.txt"), "utf8")).toBe("keep this work\n");
+  });
+
+  it.each([
+    "git@gitlab.com:other/bikehouse-front-v2.git",
+    "git@gitlab.com:balibikehouse/another-repo.git",
+    "git@github.com:balibikehouse/bikehouse-front-v2.git",
+    "git@forge-alias:balibikehouse/bikehouse-front-v2.git",
+    "ssh://git@gitlab.com:2222/balibikehouse/bikehouse-front-v2.git",
+    "ssh://other@gitlab.com/balibikehouse/bikehouse-front-v2.git",
+    "http://gitlab.com/balibikehouse/bikehouse-front-v2.git",
+    "https://gitlab.com/balibikehouse/other/../bikehouse-front-v2.git",
+    "https://gitlab.com/balibikehouse%2Fbikehouse-front-v2.git",
+    "https://gitlab.com/balibikehouse/bikehouse-front-v2.git?redirect=other",
+    "https://gitlab.com/balibikehouse/bikehouse-front-v2.git#other",
+    "https://user@gitlab.com/balibikehouse/bikehouse-front-v2.git",
+    "https://gitlab.com\\@other.invalid/balibikehouse/bikehouse-front-v2.git",
+  ])("does not broaden retained source identity for %s", async observed => {
+    const { original, input } = await fixture();
+    input.workspace.repoUrl = "https://gitlab.com/balibikehouse/bikehouse-front-v2.git";
+    await exec("git", ["-C", original, "remote", "set-url", "origin", observed]);
+    await expect(resolvePersistedGitWorkspaceSource(input)).rejects.toMatchObject({ resultJson: { workspaceValidation: {
+      reasonCode: "source_repository_mismatch",
+    } } });
+  });
+
+  it("retains original-source verification when a missing worktree uses another clone transport", async () => {
+    const { original, worktree, input } = await fixture();
+    input.workspace.repoUrl = "https://gitlab.com/group/repo.git";
+    await exec("git", ["-C", original, "remote", "set-url", "origin", "git@gitlab.com:group/repo.git"]);
+    await exec("git", ["-C", original, "worktree", "remove", "--force", worktree]);
+    expect(await resolvePersistedGitWorkspaceSource(input)).toBe(original);
+  });
+
+  it("verifies a newly materialized original source with another clone transport", async () => {
+    const { root, original, input } = await fixture();
+    input.workspace.repoUrl = "https://gitlab.com/group/repo.git";
+    const restored = path.join(root, "restored-ssh-source");
+    const missing = path.join(root, "missing-worktree");
+    expect(await resolvePersistedGitWorkspaceSource({ ...input,
+      workspace: { ...input.workspace, cwd: missing, providerRef: missing }, candidateBaseCwds: [restored],
+      materializeOriginalRepository: async () => {
+        await exec("git", ["clone", original, restored]);
+        await exec("git", ["-C", restored, "remote", "set-url", "origin", "git@gitlab.com:group/repo.git"]);
+        return restored;
+      },
+    })).toBe(restored);
+  });
+
   it("rejects a symlink that redirects a managed source into another repository", async () => {
     const { root, original, input } = await fixture();
     const alias = path.join(root, "scoped", "original");

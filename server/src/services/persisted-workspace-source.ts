@@ -50,6 +50,26 @@ async function readOrigin(cwd: string): Promise<string | null> {
   }).catch(() => null);
 }
 
+// Public forge clone transports can differ while retaining the same repository.
+// Keep aliases, custom ports/hosts and ambiguous paths subject to exact equality.
+function sameRepositoryUrl(observed: string | null, recorded: string): boolean {
+  const expected = recorded.trim();
+  if (observed === expected) return true;
+  const identity = (value: string | null): string | null => {
+    if (!value) return null;
+    const scp = /^git@(github\.com|gitlab\.com):(.+)$/.exec(value);
+    const candidate = scp ? `ssh://git@${scp[1]}/${scp[2]}` : value;
+    const hosted = /^(?:https:\/\/|ssh:\/\/git@)(github\.com|gitlab\.com)\/(.+)$/.exec(candidate);
+    if (!hosted) return null;
+    const parts = hosted[2]!.replace(/\.git$/, "").split("/");
+    if (parts.length < 2 || parts.some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === "." || part === "..")) return null;
+    if (hosted[1] === "github.com" && parts.length !== 2) return null;
+    return `${hosted[1]}/${parts.join("/")}`;
+  };
+  const left = identity(observed), right = identity(expected);
+  return left !== null && right !== null && left === right;
+}
+
 async function gitDirectory(cwd: string, flag: "--absolute-git-dir" | "--git-common-dir"): Promise<string | null> {
   const directory = await exec("git", ["rev-parse", "--path-format=absolute", flag], {
     cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, timeout: 10_000, maxBuffer: 16 * 1024,
@@ -163,7 +183,7 @@ export async function resolvePersistedGitWorkspaceSource(input: {
       const inspection = await inspectManagedGitWorktreeBranch({ worktreePath: existing, repoRoot: owner, expectedBranchName: null });
       if (inspection.inspectionDiagnostic) failedInspection ??= inspection.inspectionDiagnostic;
       if (!inspection.valid || !await hasLinkedWorktreeStorage(existing, owner)) continue;
-      if (workspace.repoUrl && await readOrigin(owner) !== workspace.repoUrl.trim()) {
+      if (workspace.repoUrl && !sameRepositoryUrl(await readOrigin(owner), workspace.repoUrl)) {
         repositoryMismatch = true;
         continue;
       }
@@ -181,7 +201,7 @@ export async function resolvePersistedGitWorkspaceSource(input: {
   // primary is never a fallback for a missing historical worktree.
   let failedInspection: ManagedGitInspectionDiagnostic | null = null;
   for (const candidate of knownRoots) {
-    if (workspace.repoUrl && await readOrigin(candidate) !== workspace.repoUrl.trim()) continue;
+    if (workspace.repoUrl && !sameRepositoryUrl(await readOrigin(candidate), workspace.repoUrl)) continue;
     const inspection = await inspectManagedGitWorktreeBranch({ worktreePath: candidate, repoRoot: candidate, expectedBranchName: null });
     if (inspection.valid) return candidate;
     if (inspection.inspectionDiagnostic) failedInspection ??= inspection.inspectionDiagnostic;
@@ -194,7 +214,7 @@ export async function resolvePersistedGitWorkspaceSource(input: {
     const materialized = await input.materializeOriginalRepository();
     const owner = await canonicalDirectory(materialized);
     const expectedRoots = await roots();
-    if (owner && expectedRoots.has(owner) && await readOrigin(owner) === workspace.repoUrl.trim()) return owner;
+    if (owner && expectedRoots.has(owner) && sameRepositoryUrl(await readOrigin(owner), workspace.repoUrl)) return owner;
   }
   fail(workspace, "source_repository_unavailable");
 }
