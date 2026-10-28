@@ -1710,8 +1710,9 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
 
       const nativePersistenceHash = await migrationHash("0227_modern_pandemic.sql");
       // Paper-01 already applied this SQL under the old 0227 filename and
-      // an older timestamp. Its hash, not its current 0294 position, is identity.
-      const recentHistoryHash = await migrationHash("0294_heartbeat_run_recent_history_indexes.sql");
+      // an older timestamp. Its hash, not its regenerated journal position, is identity.
+      const recentHistoryMigration = "0380_overconfident_malcolm_colcord.sql";
+      const recentHistoryHash = await migrationHash(recentHistoryMigration);
       const historicalUnknownHash = "0dced0f-fixture-history-not-in-current-journal";
       const recentHistoryAppliedAt = 1785170002001;
       let recentHistoryIndexOid = 0;
@@ -1741,7 +1742,7 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
         // dropping its unique index is invalid once later tenant FKs use it.
         await migrate(drizzle(sql), { migrationsFolder: directory });
         await sql.unsafe(await fs.promises.readFile(
-          new URL("0294_heartbeat_run_recent_history_indexes.sql", migrationsRoot), "utf8",
+          new URL(recentHistoryMigration, migrationsRoot), "utf8",
         ));
         await sql`
           INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
@@ -1795,7 +1796,7 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
       }
       expect(pending.pendingMigrations).toEqual(expectedPending);
       expect(pending.pendingMigrations).toContain("0227_modern_pandemic.sql");
-      expect(pending.pendingMigrations).not.toContain("0294_heartbeat_run_recent_history_indexes.sql");
+      expect(pending.pendingMigrations).not.toContain(recentHistoryMigration);
       await applyPendingMigrations(connectionString);
 
       const verifySql = postgres(connectionString, { max: 1, onnotice: () => {} });

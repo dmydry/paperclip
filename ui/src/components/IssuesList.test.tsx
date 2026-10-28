@@ -1803,7 +1803,7 @@ describe("IssuesList", () => {
     });
   });
 
-  it("does not hide status groups behind the first-paint row cap", async () => {
+  it("keeps all status-group rows reachable through progressive rendering", async () => {
     localStorage.setItem(
       "paperclip:test-issues:company-1",
       JSON.stringify({ groupBy: "status", sortField: "updated", sortDir: "desc" }),
@@ -1840,10 +1840,20 @@ describe("IssuesList", () => {
     );
 
     await waitForAssertion(() => {
+      expect(container.querySelectorAll('[data-testid="issue-row"]')).toHaveLength(100);
+      expect(container.textContent).toContain("Rendering 100 of 220 tasks");
+    });
+    await flush();
+    act(() => {
+      setDocumentScrollMetrics({ innerHeight: 600, scrollY: 1500, scrollHeight: 2000 });
+      window.dispatchEvent(new Event("scroll"));
+    });
+    await flushAnimationFrame();
+    await waitForAssertion(() => {
       expect(container.querySelectorAll('[data-testid="issue-row"]')).toHaveLength(220);
-      expect(container.textContent).toContain("Todo");
       expect(container.textContent).toContain("Todo 20");
-      expect(container.textContent).not.toContain("Rendering 150 of 220 issues");
+      expect(container.textContent).toContain("Done 200");
+      expect(container.querySelector('[data-testid="issues-load-more-sentinel"]')).toBeNull();
     });
 
     act(() => {
