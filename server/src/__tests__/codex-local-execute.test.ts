@@ -1962,7 +1962,7 @@ process.exit(1);
       const removed = await invoke("agent-1", null);
       expect(removed.prompt).not.toContain("inline@example.test");
       expect(removed.codexHome).not.toBe(sourceHome);
-      expect(removed.codexHome).toContain("skill-runtimes/agent-1/");
+      expect(removed.codexHome).toContain(path.join("agents", "agent-1", "codex-home", "skill-runtimes") + path.sep);
       await expect(fs.stat(path.join(removed.codexHome!, "skills/agentmail"))).rejects.toMatchObject({ code: "ENOENT" });
       // Remote credential copy-back leaves a regular file. A later authorized
       // account switch must not reuse that previous account's generated home.
@@ -2027,7 +2027,7 @@ process.exit(1);
     };
     try {
       const first = await invoke("agent-1", "a".repeat(64));
-      expect(first.codexHome).toContain("skill-runtimes/agent-1/");
+      expect(first.codexHome).toContain(path.join("agents", "agent-1", "codex-home", "skill-runtimes") + path.sep);
       expect(first.codexConfigContents).toContain('model_provider = "test_gateway"');
       expect(first.codexConfigContents).toContain('base_url = "https://gateway.example/v1"');
       expect(await fs.realpath(path.join(first.codexHome!, "auth.json"))).toBe(await fs.realpath(path.join(sourceHome, "auth.json")));
@@ -2054,7 +2054,7 @@ process.exit(1);
       expect(removed.codexConfigContents).toContain('model_provider = "test_gateway"');
       expect(await fs.realpath(path.join(removed.codexHome!, "auth.json"))).toBe(await fs.realpath(path.join(sourceHome, "auth.json")));
       expect(removed.codexHome).not.toBe(sourceHome);
-      expect(removed.codexHome).toContain("skill-runtimes/agent-1/");
+      expect(removed.codexHome).toContain(path.join("agents", "agent-1", "codex-home", "skill-runtimes") + path.sep);
       await expect(fs.stat(path.join(removed.codexHome!, "skills/agentmail"))).rejects.toMatchObject({ code: "ENOENT" });
       if (!explicitHome) {
         // A promoted company login can differ from the host's default account.

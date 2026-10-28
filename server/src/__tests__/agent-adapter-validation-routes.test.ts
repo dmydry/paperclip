@@ -332,7 +332,13 @@ describe("agent routes adapter validation", () => {
     }));
     await unregisterTestAdapter("external_test");
     await unregisterTestAdapter(missingAdapterType);
-  });
+    // Cold route compilation belongs to fixture setup, not the HTTP test's
+    // unchanged 15s deadline. Preserve the per-case module/mock reset above.
+    await Promise.all([
+      vi.importActual("../routes/agents.js"),
+      vi.importActual("../middleware/index.js"),
+    ]);
+  }, 60_000);
 
   it("routes narrow roster edits through authorization, config merging and audit history", async () => {
     const existing = { ...(await mockAgentService.getById()), adapterConfig: { model: "old", cwd: "/workspace" }, runtimeConfig: { heartbeat: { intervalSec: 900 } } };
