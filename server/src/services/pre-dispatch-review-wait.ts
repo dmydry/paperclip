@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 import { environmentLeases, heartbeatRunEvents, heartbeatRuns, nativeRunFinalizations, type Db } from "@paperclipai/db";
 import { PROCESS_IDENTITY_RECORDED, PROCESS_START_REQUESTED } from "./native-local-process-stop.js";
 import { hasRemoteTerminationReceipt } from "./remote-execution-termination.js";
+import { hasWorkspaceRestoreFailure } from "@paperclipai/shared";
 
 type Run = typeof heartbeatRuns.$inferSelect;
 type DispatchFields = "startedAt" | "runtimeModeResolvedAt" | "processPid" | "processGroupId" |
@@ -39,7 +40,16 @@ export function isPreDispatchReviewWait(
  * retained execution or cleanup evidence. Historical false holds must be
  * checked against the same evidence that gates explicit user admission. */
 export async function isPreDispatchReviewWaitVerified(db: Db, run: Run): Promise<boolean> {
-  if (!isPreDispatchReviewWait(run)) return false;
+  // The fork also records dependency/pause/reassignment cancellations at this
+  // gate. Preserve those waits, but never let their row receipt bypass proof.
+  const recovery = run.resultJson?.executionRecovery as Record<string, unknown> | undefined;
+  const ownedGateCancellation = run.runtimeMode === "legacy" && run.status === "cancelled" && run.scheduledRetryAttempt === 0
+    && recovery?.kind === "pre_dispatch" && recovery.source === "stale_queued_run_gate" && recovery.providerWorkStarted === false
+    && run.errorCode !== null && run.resultJson?.stopReason === run.errorCode
+    && run.resultJson?.timeoutSource === "stale_queued_run_gate"
+    && run.processPid === null && run.processGroupId === null && run.processStartedAt === null
+    && run.nativeIssueId === null && run.nativeSessionId === null && run.sessionIdAfter === null;
+  if (hasWorkspaceRestoreFailure(run.resultJson) || (!isPreDispatchReviewWait(run) && !ownedGateCancellation)) return false;
   const [coordinator] = await db.select({ id: nativeRunFinalizations.runId }).from(nativeRunFinalizations).where(and(
     eq(nativeRunFinalizations.companyId, run.companyId), eq(nativeRunFinalizations.runId, run.id),
   )).limit(1);
