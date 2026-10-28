@@ -31,6 +31,7 @@ import { actorMiddleware } from "../middleware/auth.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { cloudWarmStandbyMiddleware } from "../middleware/cloud-warm-standby.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 
 import { createPublicMcpEvents, publicMcpEventDefinitions } from "../services/public-mcp/events.js";
 import { createDotRunnerMcpBridge } from "../services/public-mcp/dot-runner.js";
@@ -806,13 +807,19 @@ describe.skipIf(!support.supported)("public MCP OAuth and tool boundary", () => 
       const edited = await f.call("paperclip_update_agent", { agentId: agent!.id, requestId: randomUUID(), changes: { title: "Editor", budgetMonthlyCents: 1200, adapterConfig: { model: "gpt-5.4" } } });
       expect(edited, JSON.stringify(edited)).toHaveProperty("agent.title", "Editor");
       const stored = (await db.select().from(agents).where(eq(agents.id, agent!.id)))[0]!;
-      expect(stored.adapterConfig.env).toEqual({ SAFE_EXISTING: { type: "plain", value: "retain" } });
+      const isolatedEnv = {
+        SAFE_EXISTING: { type: "plain", value: "retain" },
+        CODEX_HOME: { type: "plain", value: join(resolvePaperclipInstanceRoot(), "companies", f.company.id, "agents", agent!.id, "codex-home") },
+        OPENAI_API_KEY: { type: "plain", value: "" },
+      };
+      expect(stored.adapterConfig.env).toEqual(isolatedEnv);
       expect(stored.budgetMonthlyCents).toBe(1200);
       const read = await f.call("paperclip_get_agent", { agentId: agent!.id });
       expect(JSON.stringify(read)).not.toContain("SAFE_EXISTING");
-      for (const changes of [{ permissions: {} }, { adapterConfig: { command: "evil" } }, { runtimeConfig: { debug: { providerTrace: "raw" } } }]) {
+      for (const changes of [{ permissions: {} }, { adapterConfig: { command: "evil" } }, { adapterConfig: { env: { CODEX_HOME: "/untrusted-shared-home" } } }, { adapterConfig: { env: { OPENAI_API_KEY: "untrusted-fixture-key" } } }, { runtimeConfig: { debug: { providerTrace: "raw" } } }]) {
         await expect(f.call("paperclip_update_agent", { agentId: agent!.id, requestId: randomUUID(), changes })).rejects.toThrow();
       }
+      expect((await db.select().from(agents).where(eq(agents.id, agent!.id)))[0]!.adapterConfig.env).toEqual(isolatedEnv);
     } finally { await f.cleanup(); }
   });
 

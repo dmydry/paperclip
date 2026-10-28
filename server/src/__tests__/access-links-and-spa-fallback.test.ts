@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Request } from "express";
+import { createDb } from "@paperclipai/db";
 import { createApp } from "../app.js";
 import { toInviteSummaryResponse } from "../routes/access.js";
+import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
+
+const postgresSupport = await getEmbeddedPostgresTestSupport();
 
 function buildReq(host: string): Request {
   return {
@@ -76,11 +80,21 @@ describe("access links", () => {
   });
 });
 
-describe("static ui deep links", () => {
+describe.skipIf(!postgresSupport.supported)("static ui deep links", () => {
+  let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
+  let db: ReturnType<typeof createDb>;
+  beforeAll(async () => {
+    database = await startEmbeddedPostgresTestDatabase("paperclip-static-deep-links-");
+    db = createDb(database.connectionString);
+  }, 90_000);
+  afterAll(async () => {
+    await db?.$client.end({ timeout: 1 });
+    await database?.cleanup();
+  });
   it("serves the SPA shell for invite and board-claim routes", async () => {
     ensureUiDist("<!doctype html><html><body><div id='root'>paperclip-test-shell</div></body></html>");
 
-    const app = await createApp({} as any, {
+    const app = await createApp(db, {
       uiMode: "static",
       storageService: {} as any,
       deploymentMode: "local_trusted",
@@ -91,14 +105,18 @@ describe("static ui deep links", () => {
       companyDeletionEnabled: false,
     });
 
-    const inviteRes = await request(app).get("/invite/token-123");
-    expect(inviteRes.status, inviteRes.text).toBe(200);
-    expect(inviteRes.headers["content-type"]).toContain("text/html");
-    expect(inviteRes.text).toContain("paperclip-test-shell");
+    try {
+      const inviteRes = await request(app).get("/invite/token-123");
+      expect(inviteRes.status, inviteRes.text).toBe(200);
+      expect(inviteRes.headers["content-type"]).toContain("text/html");
+      expect(inviteRes.text).toContain("paperclip-test-shell");
 
-    const claimRes = await request(app).get("/board-claim/token-123?code=abc");
-    expect(claimRes.status).toBe(200);
-    expect(claimRes.headers["content-type"]).toContain("text/html");
-    expect(claimRes.text).toContain("paperclip-test-shell");
+      const claimRes = await request(app).get("/board-claim/token-123?code=abc");
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.headers["content-type"]).toContain("text/html");
+      expect(claimRes.text).toContain("paperclip-test-shell");
+    } finally {
+      await app.locals.paperclipShutdown();
+    }
   });
 });

@@ -2929,28 +2929,6 @@ function myLastReadAtExpr(companyId: string, userId: string) {
   `;
 }
 
-function inboxParticipantForUserCondition(companyId: string, userId: string) {
-  return sql<boolean>`
-    (
-      ${issues.assigneeUserId} = ${userId}
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueComments}
-        WHERE ${issueComments.issueId} = ${issues.id}
-          AND ${issueComments.companyId} = ${companyId}
-          AND ${issueComments.authorUserId} = ${userId}
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueReadStates}
-        WHERE ${issueReadStates.issueId} = ${issues.id}
-          AND ${issueReadStates.companyId} = ${companyId}
-          AND ${issueReadStates.userId} = ${userId}
-      )
-    )
-  `;
-}
-
 function myLastTouchAtExpr(companyId: string, userId: string) {
   const myLastCommentAt = myLastCommentAtExpr(companyId, userId);
   const myLastReadAt = myLastReadAtExpr(companyId, userId);
@@ -3012,7 +2990,7 @@ function issueCanonicalLastActivityAtExpr(companyId: string) {
 }
 
 function unreadForUserCondition(companyId: string, userId: string) {
-  const touchedCondition = inboxParticipantForUserCondition(companyId, userId);
+  const touchedCondition = touchedByUserCondition(companyId, userId);
   const myLastTouchAt = myLastTouchAtExpr(companyId, userId);
   const myLastRequestReadAt = sql`GREATEST(
     COALESCE(${myLastCommentAtExpr(companyId, userId)}, to_timestamp(0)),
